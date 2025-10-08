@@ -1,4 +1,4 @@
-# Jetxl ⚡
+# Jetxl ✈
 
 **Blazingly fast Excel (XLSX) writer for Python, powered by Rust**
 
