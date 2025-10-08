@@ -19,7 +19,7 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 ```bash
 pip install jetxl
 
-## install with uv (recommended)
+## Install with uv (recommended)
 
 ## uv pip install jetxl
 ```
