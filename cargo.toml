@@ -1,0 +1,37 @@
+[package]
+name = "jetxl"
+version = "0.1.0"
+edition = "2021"
+authors = ["Omar Irfan Khan"]
+description = "Blazing fast xlsx writer"
+readme = "README.md"
+
+
+[lib]
+name = "jetxl"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.26", features = ["extension-module"] }
+pyo3-arrow = "0.12"
+arrow = "56.2"
+arrow-array = "56.1"
+arrow-schema = "56.1"
+arrow-data = "56.1"
+mtzip = { version = "4.0.3", features = ["rayon"] }
+chrono = "0.4"
+ryu = "1.0"
+itoa = "1.0"
+memchr = "2.7"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+rayon = "1.10"
+
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
