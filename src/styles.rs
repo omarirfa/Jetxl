@@ -293,13 +293,13 @@ impl StyleRegistry {
         self.cell_xfs = vec![
             // 0: Normal
             CellXfEntry { num_fmt_id: 0, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 1: Date/DateTime
+            // 1: DateTime
             CellXfEntry { num_fmt_id: 164, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             // 2: Bold header
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 0, border_id: 0, alignment: None },
             // 3: Bold header with fill
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 2, border_id: 0, alignment: None },
-            // 4: Currency
+            // 4: Currency ($#,##0.00)
             CellXfEntry { num_fmt_id: 168, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             // 5: Percentage
             CellXfEntry { num_fmt_id: 9, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
@@ -307,10 +307,18 @@ impl StyleRegistry {
             CellXfEntry { num_fmt_id: 10, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             // 7: Integer
             CellXfEntry { num_fmt_id: 165, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 8: Decimal
+            // 8: Decimal2 (0.00)
             CellXfEntry { num_fmt_id: 166, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             // 9: Hyperlink
             CellXfEntry { num_fmt_id: 0, font_id: 2, fill_id: 0, border_id: 0, alignment: None },
+            // 10: Date (yyyy-mm-dd)
+            CellXfEntry { num_fmt_id: 14, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
+            // 11: Time (hh:mm:ss)
+            CellXfEntry { num_fmt_id: 170, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
+            // 12: Currency rounded ($#,##0)
+            CellXfEntry { num_fmt_id: 169, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
+            // 13: Decimal4 (0.0000)
+            CellXfEntry { num_fmt_id: 167, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
         ];
     }
     

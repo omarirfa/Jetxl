@@ -460,12 +460,16 @@ pub fn generate_sheet_xml_from_arrow(
                 formats.get(field.name()).map(|fmt| {
                     let style_id = match fmt {
                         NumberFormat::General => 0,
-                        NumberFormat::Date | NumberFormat::DateTime | NumberFormat::Time => 1,
-                        NumberFormat::Currency | NumberFormat::CurrencyRounded => 4,
+                        NumberFormat::DateTime => 1,
+                        NumberFormat::Currency => 4,
                         NumberFormat::Percentage => 5,
                         NumberFormat::PercentageDecimal => 6,
                         NumberFormat::Integer => 7,
-                        NumberFormat::Decimal2 | NumberFormat::Decimal4 => 8,
+                        NumberFormat::Decimal2 => 8,
+                        NumberFormat::Date => 10,
+                        NumberFormat::Time => 11,
+                        NumberFormat::CurrencyRounded => 12,
+                        NumberFormat::Decimal4 => 13,
                     };
                     (idx, style_id)
                 })
@@ -955,14 +959,14 @@ fn write_arrow_cell_to_xml_optimized(
                 .checked_add_signed(chrono::Duration::days(days as i64))
                 .ok_or_else(|| WriteError::Validation("Date out of range".to_string()))?;
             let dt = date.and_hms_opt(0, 0, 0).unwrap();
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(10)), buf, ryu_buf);  // Changed: default to Date format (10)
         }
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             let millis = arr.value(row_idx);
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
-            write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&datetime.naive_utc(), cell_ref, style_id.or(Some(10)), buf, ryu_buf);  // Changed: default to Date format (10)
         }
         DataType::Timestamp(unit, _) => {
             use arrow_schema::TimeUnit;
@@ -998,7 +1002,7 @@ fn write_arrow_cell_to_xml_optimized(
                         .naive_utc()
                 }
             };
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(1)), buf, ryu_buf);  // Keep DateTime format (1) for timestamps
         }
         _ => {
             buf.extend_from_slice(b"<c r=\"");
@@ -1033,6 +1037,7 @@ fn write_number_cell_int(
     buf.extend_from_slice(b"</v></c>");
 }
 
+// xml.rs - Replace write_number_cell (around line 857)
 #[inline(always)]
 fn write_number_cell(
     n: f64,
@@ -1042,6 +1047,18 @@ fn write_number_cell(
     ryu_buf: &mut ryu::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
+    // Handle NaN and infinity - write empty cell
+    if !n.is_finite() {
+        buf.extend_from_slice(b"<c r=\"");
+        buf.extend_from_slice(cell_ref);
+        if let Some(sid) = style_id {
+            buf.extend_from_slice(b"\" s=\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+        }
+        buf.extend_from_slice(b"\"/>");
+        return;
+    }
+    
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     if let Some(sid) = style_id {
@@ -1060,6 +1077,7 @@ fn write_number_cell(
     buf.extend_from_slice(b"</v></c>");
 }
 
+// xml.rs - Replace write_date_cell (around line 880)
 #[inline(always)]
 fn write_date_cell(
     dt: &chrono::NaiveDateTime,
@@ -1068,12 +1086,26 @@ fn write_date_cell(
     buf: &mut Vec<u8>,
     ryu_buf: &mut ryu::Buffer,
 ) {
+    let serial = datetime_to_excel_serial(dt);
+    
+    // Handle NaN from invalid dates
+    if !serial.is_finite() {
+        buf.extend_from_slice(b"<c r=\"");
+        buf.extend_from_slice(cell_ref);
+        if let Some(sid) = style_id {
+            buf.extend_from_slice(b"\" s=\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+        }
+        buf.extend_from_slice(b"\"/>");
+        return;
+    }
+    
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     buf.extend_from_slice(b"\" s=\"");
     buf.extend_from_slice(itoa::Buffer::new().format(style_id.unwrap_or(1)).as_bytes());
     buf.extend_from_slice(b"\"><v>");
-    buf.extend_from_slice(ryu_buf.format(datetime_to_excel_serial(dt)).as_bytes());
+    buf.extend_from_slice(ryu_buf.format(serial).as_bytes());
     buf.extend_from_slice(b"</v></c>");
 }
 
@@ -1195,17 +1227,24 @@ pub fn generate_sheet_xml_from_dict(
                     buf.extend_from_slice(b"</t></is></c>");
                 }
                 CellValue::Number(n) => {
-                    buf.extend_from_slice(b"<c r=\"");
-                    buf.extend_from_slice(cell_ref_slice);
-                    buf.extend_from_slice(b"\"><v>");
-                    
-                    let abs = n.abs();
-                    if n.fract() == 0.0 && abs < 9007199254740992.0 && abs > 0.0 {
-                        buf.extend_from_slice(cell_int_buf.format(*n as i64).as_bytes());
+                    // Handle NaN and infinity - write empty cell
+                    if !n.is_finite() {
+                        buf.extend_from_slice(b"<c r=\"");
+                        buf.extend_from_slice(cell_ref_slice);
+                        buf.extend_from_slice(b"\"/>");
                     } else {
-                        buf.extend_from_slice(ryu_buf.format(*n).as_bytes());
+                        buf.extend_from_slice(b"<c r=\"");
+                        buf.extend_from_slice(cell_ref_slice);
+                        buf.extend_from_slice(b"\"><v>");
+                        
+                        let abs = n.abs();
+                        if n.fract() == 0.0 && abs < 9007199254740992.0 && abs > 0.0 {
+                            buf.extend_from_slice(cell_int_buf.format(*n as i64).as_bytes());
+                        } else {
+                            buf.extend_from_slice(ryu_buf.format(*n).as_bytes());
+                        }
+                        buf.extend_from_slice(b"</v></c>");
                     }
-                    buf.extend_from_slice(b"</v></c>");
                 }
                 CellValue::Bool(b) => {
                     buf.extend_from_slice(b"<c r=\"");
