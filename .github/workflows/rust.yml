@@ -33,23 +33,30 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Build wheels using cibuildwheel
         uses: pypa/cibuildwheel@v2.19.1
         env:
+          # --- NEW: Use uv for faster package installation ---
+          CIBW_INSTALLER: uv
+
           # --- Configuration for cibuildwheel ---
           # 1. Specify the Python versions to build for.
-          # This builds for CPython 3.8, 3.9, 3.10, 3.11, and 3.12.
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
 
           # 2. Skip builds for PyPy, as they were not requested.
           CIBW_SKIP: "pp*"
 
           # 3. For macOS, build for both Intel (x86_64) and Apple Silicon (arm64).
-          # This creates a universal wheel that works on both architectures.
           CIBW_ARCHS_MACOS: "x86_64 arm64"
 
           # 4. For Linux, use the manylinux2014 image for broad compatibility.
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+
+          # 5. Use the lld linker for faster, more reliable linking on Linux.
+          CIBW_ENVIRONMENT_LINUX: 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "clang" RUSTFLAGS = "-C link-arg=-fuse-ld=lld"'
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
@@ -57,6 +64,49 @@ jobs:
           # Each artifact will be named based on the OS, e.g., "wheels-ubuntu-latest"
           name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
+# jobs:
+#   build_wheels:
+#     name: Build wheels on ${{ matrix.os }}
+#     runs-on: ${{ matrix.os }}
+#     strategy:
+#       # Ensures that a failure on one OS doesn't cancel the other jobs
+#       fail-fast: false
+#       matrix:
+#         os: [windows-latest]
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Set up Rust toolchain
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           toolchain: stable
+
+#       - name: Build wheels using cibuildwheel
+#         uses: pypa/cibuildwheel@v2.19.1
+#         env:
+#           # --- Configuration for cibuildwheel ---
+#           # 1. Specify the Python versions to build for.
+#           # This builds for CPython 3.8, 3.9, 3.10, 3.11, and 3.12.
+#           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
+
+#           # 2. Skip builds for PyPy, as they were not requested.
+#           CIBW_SKIP: "pp*"
+
+#           # 3. For macOS, build for both Intel (x86_64) and Apple Silicon (arm64).
+#           # This creates a universal wheel that works on both architectures.
+#           CIBW_ARCHS_MACOS: "x86_64 arm64"
+
+#           # 4. For Linux, use the manylinux2014 image for broad compatibility.
+#           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+
+#       - name: Upload wheels as artifacts
+#         uses: actions/upload-artifact@v4
+#         with:
+#           # Each artifact will be named based on the OS, e.g., "wheels-ubuntu-latest"
+#           name: wheels-${{ matrix.os }}
+#           path: ./wheelhouse/*.whl
 
   # # --- OPTIONAL: This job will create a GitHub Release when you push a git tag ---
   # # To use this, push a tag like `v0.1.0` to your repository.
