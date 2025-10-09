@@ -35,6 +35,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+      
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
 
       - name: Build wheels using cibuildwheel
         uses: pypa/cibuildwheel@v3.2.0
