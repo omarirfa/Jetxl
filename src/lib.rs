@@ -534,20 +534,25 @@ fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalForma
         _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid rule type")),
     };
     
-    
-    let style = CellStyle {
-        font: Some(FontStyle {
-            bold: true,
-            italic: false,
-            underline: false,
-            size: None,
-            color: Some("FFFF0000".to_string()),
-            name: None,
-        }),
-        fill: None,
-        border: None,
-        alignment: None,
-        number_format: None,
+    // Extract style from dict if provided, otherwise use default
+    let style = if let Some(style_dict) = dict.get_item("style")? {
+        extract_cell_style(style_dict.downcast::<PyDict>()?)?.style
+    } else {
+        // Default red bold style
+        CellStyle {
+            font: Some(FontStyle {
+                bold: true,
+                italic: false,
+                underline: false,
+                size: None,
+                color: Some("FFFF0000".to_string()),
+                name: None,
+            }),
+            fill: None,
+            border: None,
+            alignment: None,
+            number_format: None,
+        }
     };
     
     Ok(ConditionalFormat {
