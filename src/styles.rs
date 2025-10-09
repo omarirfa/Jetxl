@@ -71,7 +71,6 @@ pub struct Hyperlink {
     pub display: Option<String>,
 }
 
-// Cell-level styling
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellStyle {
     pub font: Option<FontStyle>,
@@ -87,14 +86,14 @@ pub struct FontStyle {
     pub italic: bool,
     pub underline: bool,
     pub size: Option<f64>,
-    pub color: Option<String>,  // RGB format: "FFRRGGBB"
+    pub color: Option<String>,
     pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FillStyle {
     pub pattern_type: PatternType,
-    pub fg_color: Option<String>,  // RGB format: "FFRRGGBB"
+    pub fg_color: Option<String>,
     pub bg_color: Option<String>,
 }
 
@@ -116,7 +115,7 @@ pub struct BorderStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BorderSide {
     pub style: BorderLineStyle,
-    pub color: Option<String>,  // RGB format: "FFRRGGBB"
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,7 +133,7 @@ pub struct AlignmentStyle {
     pub horizontal: Option<HorizontalAlignment>,
     pub vertical: Option<VerticalAlignment>,
     pub wrap_text: bool,
-    pub text_rotation: Option<i32>,  // 0-180 degrees, or 255 for vertical
+    pub text_rotation: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,16 +151,14 @@ pub enum VerticalAlignment {
     Bottom,
 }
 
-// Formula support
 #[derive(Debug, Clone)]
 pub struct Formula {
     pub row: usize,
     pub col: usize,
     pub formula: String,
-    pub cached_value: Option<String>,  // Optional pre-calculated value
+    pub cached_value: Option<String>,
 }
 
-// NEW: Conditional formatting
 #[derive(Debug, Clone)]
 pub struct ConditionalFormat {
     pub start_row: usize,
@@ -204,12 +201,11 @@ pub struct StyleConfig {
     pub merge_cells: Vec<MergeRange>,
     pub data_validations: Vec<DataValidation>,
     pub hyperlinks: Vec<Hyperlink>,
-    
-    
-    pub row_heights: Option<HashMap<usize, f64>>,  // row index -> height in points
-    pub cell_styles: Vec<CellStyleMap>,  // individual cell styles
+    pub row_heights: Option<HashMap<usize, f64>>,
+    pub cell_styles: Vec<CellStyleMap>,
     pub formulas: Vec<Formula>,
     pub conditional_formats: Vec<ConditionalFormat>,
+    pub cond_format_dxf_ids: HashMap<usize, u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -236,16 +232,17 @@ impl Default for StyleConfig {
             cell_styles: Vec::new(),
             formulas: Vec::new(),
             conditional_formats: Vec::new(),
+            cond_format_dxf_ids: HashMap::new(),
         }
     }
 }
 
-/// Style registry to avoid duplication and optimize file size
 pub struct StyleRegistry {
     fonts: Vec<FontStyle>,
     fills: Vec<FillStyle>,
     borders: Vec<BorderStyle>,
     cell_xfs: Vec<CellXfEntry>,
+    dxfs: Vec<CellStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,66 +256,40 @@ struct CellXfEntry {
 
 impl StyleRegistry {
     pub fn new() -> Self {
-        // Start with default styles
         let mut registry = Self {
             fonts: vec![
-                // 0: Normal
                 FontStyle { bold: false, italic: false, underline: false, size: Some(11.0), color: None, name: Some("Calibri".to_string()) },
-                // 1: Bold (for headers)
                 FontStyle { bold: true, italic: false, underline: false, size: Some(11.0), color: None, name: Some("Calibri".to_string()) },
-                // 2: Hyperlink (blue, underlined)
                 FontStyle { bold: false, italic: false, underline: true, size: Some(11.0), color: Some("FF0000FF".to_string()), name: Some("Calibri".to_string()) },
             ],
             fills: vec![
-                // 0: None
                 FillStyle { pattern_type: PatternType::None, fg_color: None, bg_color: None },
-                // 1: Gray125
                 FillStyle { pattern_type: PatternType::Gray125, fg_color: None, bg_color: None },
-                // 2: Light gray header
                 FillStyle { pattern_type: PatternType::Solid, fg_color: Some("FFD9D9D9".to_string()), bg_color: None },
             ],
             borders: vec![
-                // 0: No border
                 BorderStyle { left: None, right: None, top: None, bottom: None },
             ],
             cell_xfs: vec![],
+            dxfs: Vec::new(),
         };
         
-        // Build default cellXfs entries
         registry.build_default_xfs();
         registry
     }
     
     fn build_default_xfs(&mut self) {
         self.cell_xfs = vec![
-            // 0: Normal
             CellXfEntry { num_fmt_id: 0, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 1: DateTime
             CellXfEntry { num_fmt_id: 164, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 2: Bold header
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 0, border_id: 0, alignment: None },
-            // 3: Bold header with fill
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 2, border_id: 0, alignment: None },
-            // 4: Currency ($#,##0.00)
             CellXfEntry { num_fmt_id: 168, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 5: Percentage
             CellXfEntry { num_fmt_id: 9, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 6: Percentage with decimal
             CellXfEntry { num_fmt_id: 10, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 7: Integer
             CellXfEntry { num_fmt_id: 165, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 8: Decimal2 (0.00)
             CellXfEntry { num_fmt_id: 166, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 9: Hyperlink
             CellXfEntry { num_fmt_id: 0, font_id: 2, fill_id: 0, border_id: 0, alignment: None },
-            // 10: Date (yyyy-mm-dd)
-            CellXfEntry { num_fmt_id: 14, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 11: Time (hh:mm:ss)
-            CellXfEntry { num_fmt_id: 170, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 12: Currency rounded ($#,##0)
-            CellXfEntry { num_fmt_id: 169, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            // 13: Decimal4 (0.0000)
-            CellXfEntry { num_fmt_id: 167, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
         ];
     }
     
@@ -355,7 +326,6 @@ impl StyleRegistry {
             alignment: style.alignment.clone(),
         };
         
-        // Check if this combination already exists
         for (idx, xf) in self.cell_xfs.iter().enumerate() {
             if xf.num_fmt_id == entry.num_fmt_id 
                 && xf.font_id == entry.font_id 
@@ -366,9 +336,21 @@ impl StyleRegistry {
             }
         }
         
-        // Add new entry
         self.cell_xfs.push(entry);
         (self.cell_xfs.len() - 1) as u32
+    }
+    
+    pub fn register_dxf(&mut self, style: &CellStyle) -> u32 {
+        for (idx, dxf) in self.dxfs.iter().enumerate() {
+            if dxf.font == style.font 
+                && dxf.fill == style.fill 
+                && dxf.border == style.border 
+                && dxf.number_format == style.number_format {
+                return idx as u32;
+            }
+        }
+        self.dxfs.push(style.clone());
+        (self.dxfs.len() - 1) as u32
     }
     
     fn get_or_add_font(&mut self, font: &FontStyle) -> u32 {
@@ -402,14 +384,12 @@ impl StyleRegistry {
     }
 }
 
-/// Generate enhanced styles.xml with custom cell styles
 pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     let mut xml = String::with_capacity(2000 + registry.fonts.len() * 200);
     
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\n");
     
-    // 1. Number formats
     xml.push_str("<numFmts count=\"7\">\n");
     xml.push_str("  <numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd hh:mm:ss\"/>\n");
     xml.push_str("  <numFmt numFmtId=\"165\" formatCode=\"0\"/>\n");
@@ -420,7 +400,6 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     xml.push_str("  <numFmt numFmtId=\"170\" formatCode=\"hh:mm:ss\"/>\n");
     xml.push_str("</numFmts>\n");
     
-    // 2. Fonts
     xml.push_str(&format!("<fonts count=\"{}\">\n", registry.fonts.len()));
     for font in &registry.fonts {
         xml.push_str("  <font>");
@@ -440,7 +419,6 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</fonts>\n");
     
-    // 3. Fills
     xml.push_str(&format!("<fills count=\"{}\">\n", registry.fills.len()));
     for fill in &registry.fills {
         xml.push_str("  <fill>");
@@ -462,7 +440,6 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</fills>\n");
     
-    // 4. Borders
     xml.push_str(&format!("<borders count=\"{}\">\n", registry.borders.len()));
     for border in &registry.borders {
         xml.push_str("  <border>");
@@ -475,13 +452,10 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</borders>\n");
     
-    // cellStyleXfs - REQUIRED element (must come BEFORE cellXfs)
-    // This defines the base formatting for cell styles
     xml.push_str("<cellStyleXfs count=\"1\">\n");
     xml.push_str("  <xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/>\n");
     xml.push_str("</cellStyleXfs>\n");
     
-    // 6. Cell XFs
     xml.push_str(&format!("<cellXfs count=\"{}\">\n", registry.cell_xfs.len()));
     for xf in &registry.cell_xfs {
         xml.push_str(&format!("  <xf numFmtId=\"{}\" fontId=\"{}\" fillId=\"{}\" borderId=\"0\"", 
@@ -529,17 +503,61 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</cellXfs>\n");
     
-    // 7. cellStyles 
     xml.push_str("<cellStyles count=\"1\">\n");
     xml.push_str("  <cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/>\n");
     xml.push_str("</cellStyles>\n");
     
-    // 8. dxfs - MUST come AFTER cellXfs for conditional formatting
-    xml.push_str("<dxfs count=\"1\">\n");
-    xml.push_str("  <dxf>\n");
-    xml.push_str("    <font><b/><color rgb=\"FFFF0000\"/></font>\n");
-    xml.push_str("    <fill><patternFill patternType=\"solid\"><bgColor rgb=\"FFFFEB9C\"/></patternFill></fill>\n");
-    xml.push_str("  </dxf>\n");
+    xml.push_str(&format!("<dxfs count=\"{}\">\n", registry.dxfs.len()));
+    for dxf in &registry.dxfs {
+        xml.push_str("  <dxf>");
+        
+        if let Some(ref font) = dxf.font {
+            xml.push_str("<font>");
+            if font.bold { xml.push_str("<b/>"); }
+            if font.italic { xml.push_str("<i/>"); }
+            if font.underline { xml.push_str("<u/>"); }
+            if let Some(ref color) = font.color {
+                xml.push_str(&format!("<color rgb=\"{}\"/>", color));
+            }
+            if let Some(size) = font.size {
+                xml.push_str(&format!("<sz val=\"{}\"/>", size));
+            }
+            xml.push_str("</font>");
+        }
+        
+        if let Some(ref fill) = dxf.fill {
+            xml.push_str("<fill>");
+            match fill.pattern_type {
+                PatternType::Solid => {
+                    xml.push_str("<patternFill patternType=\"solid\">");
+                    if let Some(ref fg) = fill.fg_color {
+                        xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
+                    }
+                    if let Some(ref bg) = fill.bg_color {
+                        xml.push_str(&format!("<bgColor rgb=\"{}\"/>", bg));
+                    }
+                    xml.push_str("</patternFill>");
+                }
+                _ => xml.push_str("<patternFill patternType=\"none\"/>"),
+            }
+            xml.push_str("</fill>");
+        }
+        
+        if let Some(ref border) = dxf.border {
+            xml.push_str("<border>");
+            write_border_side(&mut xml, "left", &border.left);
+            write_border_side(&mut xml, "right", &border.right);
+            write_border_side(&mut xml, "top", &border.top);
+            write_border_side(&mut xml, "bottom", &border.bottom);
+            xml.push_str("</border>");
+        }
+        
+        if let Some(ref fmt) = dxf.number_format {
+            xml.push_str(&format!("<numFmt numFmtId=\"{}\"/>", fmt.num_fmt_id()));
+        }
+        
+        xml.push_str("</dxf>\n");
+    }
     xml.push_str("</dxfs>\n");
     
     xml.push_str("</styleSheet>");
@@ -565,13 +583,11 @@ fn write_border_side(xml: &mut String, side: &str, border: &Option<BorderSide>) 
     }
 }
 
-/// Generate the default styles.xml (for backward compatibility)
 pub fn generate_styles_xml() -> String {
     let registry = StyleRegistry::new();
     generate_styles_xml_enhanced(&registry)
 }
 
-/// Calculate optimal column width from Arrow array
 pub fn calculate_column_width(
     array: &dyn Array,
     header: &str,

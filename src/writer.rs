@@ -103,12 +103,16 @@ pub fn write_single_sheet_arrow_with_config(
     // Build style registry if we have custom cell styles
     let style_registry = if !config.cell_styles.is_empty() || !config.conditional_formats.is_empty() {
         let mut registry = StyleRegistry::new();
+        
         for cell_style in &config.cell_styles {
             registry.register_cell_style(&cell_style.style);
         }
+        
         for cond_format in &config.conditional_formats {
             registry.register_cell_style(&cond_format.style);
+            registry.register_dxf(&cond_format.style);  // Register dxf too
         }
+        
         Some(registry)
     } else {
         None
@@ -174,11 +178,14 @@ pub fn write_multiple_sheets_arrow_with_configs(
         for (_, _, config) in sheets {
             if !config.cell_styles.is_empty() || !config.conditional_formats.is_empty() {
                 has_custom_styles = true;
+                
                 for cell_style in &config.cell_styles {
                     registry.register_cell_style(&cell_style.style);
                 }
+                
                 for cond_format in &config.conditional_formats {
                     registry.register_cell_style(&cond_format.style);
+                    registry.register_dxf(&cond_format.style);  // Register dxf too
                 }
             }
         }
@@ -276,8 +283,25 @@ fn add_static_files(
     
     zipper
         .add_file_from_memory(
-            xml::generate_rels().into_bytes(),
+            xml::generate_rels().as_bytes().to_vec(),
             "_rels/.rels".to_string(),
+        )
+        .compression_level(CompressionLevel::fast())
+        .done();
+    
+    // Add document properties
+    zipper
+        .add_file_from_memory(
+            xml::generate_core_xml().as_bytes().to_vec(),
+            "docProps/core.xml".to_string(),
+        )
+        .compression_level(CompressionLevel::fast())
+        .done();
+    
+    zipper
+        .add_file_from_memory(
+            xml::generate_app_xml(sheet_names).into_bytes(),
+            "docProps/app.xml".to_string(),
         )
         .compression_level(CompressionLevel::fast())
         .done();

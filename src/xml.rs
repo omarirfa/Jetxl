@@ -21,6 +21,42 @@ use std::collections::HashMap;
 //     "activeXControls", "webPublishItems", "tableParts", "extLst"
 // ];
 
+pub fn generate_app_xml(sheet_names: &[&str]) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" \
+xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">\
+<Application>Microsoft Excel</Application>\
+<DocSecurity>0</DocSecurity>\
+<ScaleCrop>false</ScaleCrop>\
+<HeadingPairs><vt:vector size=\"2\" baseType=\"variant\">\
+<vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant>\
+<vt:variant><vt:i4>{}</vt:i4></vt:variant>\
+</vt:vector></HeadingPairs>\
+<TitlesOfParts><vt:vector size=\"{}\" baseType=\"lpstr\">{}</vt:vector></TitlesOfParts>\
+<LinksUpToDate>false</LinksUpToDate>\
+<SharedDoc>false</SharedDoc>\
+<AppVersion>16.0300</AppVersion>\
+</Properties>",
+        sheet_names.len(),
+        sheet_names.len(),
+        sheet_names.iter().map(|n| format!("<vt:lpstr>{}</vt:lpstr>", n)).collect::<Vec<_>>().join("")
+    )
+}
+
+pub fn generate_core_xml() -> &'static str {
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" \
+xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+xmlns:dcterms=\"http://purl.org/dc/terms/\" \
+xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\
+<dc:creator>jetxl</dc:creator>\
+<cp:lastModifiedBy>jetxl</cp:lastModifiedBy>\
+<dcterms:created xsi:type=\"dcterms:W3CDTF\">2020-01-01T00:00:00Z</dcterms:created>\
+<dcterms:modified xsi:type=\"dcterms:W3CDTF\">2020-01-01T00:00:00Z</dcterms:modified>\
+</cp:coreProperties>"
+}
+
 /// Zero-allocation column letter writing - returns length written
 #[inline(always)]
 pub fn write_col_letter(col: usize, buf: &mut [u8; 4]) -> usize {
@@ -107,14 +143,16 @@ pub fn xml_escape_simd(input: &[u8], output: &mut Vec<u8>) {
 }
 
 pub fn generate_content_types(sheet_names: &[&str]) -> String {
-    let mut xml = String::with_capacity(500 + sheet_names.len() * 150);
+    let mut xml = String::with_capacity(800 + sheet_names.len() * 150);
     xml.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
 <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
 <Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
-<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>",
+<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>\
+<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>\
+<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
     );
 
     for i in 1..=sheet_names.len() {
@@ -127,20 +165,25 @@ pub fn generate_content_types(sheet_names: &[&str]) -> String {
     xml
 }
 
-pub fn generate_rels() -> String {
+pub fn generate_rels() -> &'static str {
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
 <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>\
+<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>\
+<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>\
 </Relationships>"
-        .to_string()
 }
 
 pub fn generate_workbook(sheet_names: &[&str]) -> String {
-    let mut xml = String::with_capacity(300 + sheet_names.len() * 80);
+    let mut xml = String::with_capacity(500 + sheet_names.len() * 80);
     xml.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
-xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>",
+xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+<fileVersion appName=\"xl\" lastEdited=\"7\" lowestEdited=\"7\" rupBuild=\"22621\"/>\
+<workbookPr defaultThemeVersion=\"166925\"/>\
+<bookViews><workbookView xWindow=\"0\" yWindow=\"0\" windowWidth=\"28800\" windowHeight=\"12600\"/></bookViews>\
+<sheets>",
     );
 
     for (i, name) in sheet_names.iter().enumerate() {
@@ -154,7 +197,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
         xml.push_str("\"/>");
     }
 
-    xml.push_str("</sheets></workbook>");
+    xml.push_str("</sheets><calcPr calcId=\"191029\"/></workbook>");
     xml
 }
 
@@ -377,9 +420,10 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"\"/>");
 
-    // 2. SHEETVIEWS (freeze panes)
+    // 2. SHEETVIEWS (always include)
+    buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
-        buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\">");
+        buf.push(b'>');
         buf.extend_from_slice(b"<pane ");
         
         if config.freeze_cols > 0 {
@@ -398,6 +442,8 @@ pub fn generate_sheet_xml_from_arrow(
         write_cell_ref(config.freeze_cols, config.freeze_rows + 1, &mut buf);
         buf.extend_from_slice(b"\" activePane=\"bottomRight\" state=\"frozen\"/>");
         buf.extend_from_slice(b"</sheetView></sheetViews>");
+    } else {
+        buf.extend_from_slice(b"/></sheetViews>");
     }
 
     // 3. SHEETFORMATPR (default row height if specified)
@@ -460,16 +506,12 @@ pub fn generate_sheet_xml_from_arrow(
                 formats.get(field.name()).map(|fmt| {
                     let style_id = match fmt {
                         NumberFormat::General => 0,
-                        NumberFormat::DateTime => 1,
-                        NumberFormat::Currency => 4,
+                        NumberFormat::Date | NumberFormat::DateTime | NumberFormat::Time => 1,
+                        NumberFormat::Currency | NumberFormat::CurrencyRounded => 4,
                         NumberFormat::Percentage => 5,
                         NumberFormat::PercentageDecimal => 6,
                         NumberFormat::Integer => 7,
-                        NumberFormat::Decimal2 => 8,
-                        NumberFormat::Date => 10,
-                        NumberFormat::Time => 11,
-                        NumberFormat::CurrencyRounded => 12,
-                        NumberFormat::Decimal4 => 13,
+                        NumberFormat::Decimal2 | NumberFormat::Decimal4 => 8,
                     };
                     (idx, style_id)
                 })
@@ -612,7 +654,7 @@ pub fn generate_sheet_xml_from_arrow(
     }
      // 8. CONDITIONAL FORMATTING
     if !config.conditional_formats.is_empty() {
-        write_conditional_formatting(&mut buf, &config.conditional_formats);
+        write_conditional_formatting(&mut buf, &config.conditional_formats, config);
     }
 
     // 9. DATA VALIDATIONS
@@ -718,8 +760,8 @@ pub fn generate_sheet_xml_from_arrow(
 
 
 /// Write conditional formatting section
-fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]) {
-    for format in formats {
+fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat], config: &StyleConfig) {
+    for (idx, format) in formats.iter().enumerate() {
         buf.extend_from_slice(b"<conditionalFormatting sqref=\"");
         write_cell_ref(format.start_col, format.start_row, buf);
         buf.push(b':');
@@ -730,7 +772,10 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
         
         match &format.rule {
             ConditionalRule::CellValue { operator, value } => {
-                buf.extend_from_slice(b"cellIs\" dxfId=\"0\" operator=\"");  // MUST have dxfId
+                let dxf_id = config.cond_format_dxf_ids.get(&idx).copied().unwrap_or(0);
+                buf.extend_from_slice(b"cellIs\" dxfId=\"");
+                buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
+                buf.extend_from_slice(b"\" operator=\"");
                 let op_str = match operator {
                     ComparisonOperator::GreaterThan => "greaterThan",
                     ComparisonOperator::LessThan => "lessThan",
@@ -748,7 +793,6 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
                 buf.extend_from_slice(b"</formula></cfRule>");
             }
             ConditionalRule::ColorScale { min_color, max_color, mid_color } => {
-                // colorScale does NOT use dxfId - colors are inline
                 buf.extend_from_slice(b"colorScale\" priority=\"");
                 buf.extend_from_slice(itoa::Buffer::new().format(format.priority).as_bytes());
                 buf.extend_from_slice(b"\"><colorScale><cfvo type=\"min\"/>");
@@ -769,7 +813,6 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
                 buf.extend_from_slice(b"\"/></colorScale></cfRule>");
             }
             ConditionalRule::DataBar { color, show_value } => {
-                // dataBar does NOT use dxfId - color is inline
                 buf.extend_from_slice(b"dataBar\" priority=\"");
                 buf.extend_from_slice(itoa::Buffer::new().format(format.priority).as_bytes());
                 buf.extend_from_slice(b"\"><dataBar><cfvo type=\"min\"/><cfvo type=\"max\"/><color rgb=\"");
@@ -781,7 +824,10 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
                 buf.extend_from_slice(b"</dataBar></cfRule>");
             }
             ConditionalRule::Top10 { rank, bottom } => {
-                buf.extend_from_slice(b"top10\" dxfId=\"0\" priority=\"");  // MUST have dxfId
+                let dxf_id = config.cond_format_dxf_ids.get(&idx).copied().unwrap_or(0);
+                buf.extend_from_slice(b"top10\" dxfId=\"");
+                buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
+                buf.extend_from_slice(b"\" priority=\"");
                 buf.extend_from_slice(itoa::Buffer::new().format(format.priority).as_bytes());
                 buf.extend_from_slice(b"\" rank=\"");
                 buf.extend_from_slice(itoa::Buffer::new().format(*rank).as_bytes());
@@ -959,14 +1005,14 @@ fn write_arrow_cell_to_xml_optimized(
                 .checked_add_signed(chrono::Duration::days(days as i64))
                 .ok_or_else(|| WriteError::Validation("Date out of range".to_string()))?;
             let dt = date.and_hms_opt(0, 0, 0).unwrap();
-            write_date_cell(&dt, cell_ref, style_id.or(Some(10)), buf, ryu_buf);  // Changed: default to Date format (10)
+            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
         }
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             let millis = arr.value(row_idx);
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
-            write_date_cell(&datetime.naive_utc(), cell_ref, style_id.or(Some(10)), buf, ryu_buf);  // Changed: default to Date format (10)
+            write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
         }
         DataType::Timestamp(unit, _) => {
             use arrow_schema::TimeUnit;
@@ -1002,7 +1048,7 @@ fn write_arrow_cell_to_xml_optimized(
                         .naive_utc()
                 }
             };
-            write_date_cell(&dt, cell_ref, style_id.or(Some(1)), buf, ryu_buf);  // Keep DateTime format (1) for timestamps
+            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
         }
         _ => {
             buf.extend_from_slice(b"<c r=\"");
@@ -1037,7 +1083,6 @@ fn write_number_cell_int(
     buf.extend_from_slice(b"</v></c>");
 }
 
-// xml.rs - Replace write_number_cell (around line 857)
 #[inline(always)]
 fn write_number_cell(
     n: f64,
@@ -1047,18 +1092,6 @@ fn write_number_cell(
     ryu_buf: &mut ryu::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
-    // Handle NaN and infinity - write empty cell
-    if !n.is_finite() {
-        buf.extend_from_slice(b"<c r=\"");
-        buf.extend_from_slice(cell_ref);
-        if let Some(sid) = style_id {
-            buf.extend_from_slice(b"\" s=\"");
-            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
-        }
-        buf.extend_from_slice(b"\"/>");
-        return;
-    }
-    
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     if let Some(sid) = style_id {
@@ -1077,7 +1110,6 @@ fn write_number_cell(
     buf.extend_from_slice(b"</v></c>");
 }
 
-// xml.rs - Replace write_date_cell (around line 880)
 #[inline(always)]
 fn write_date_cell(
     dt: &chrono::NaiveDateTime,
@@ -1086,26 +1118,12 @@ fn write_date_cell(
     buf: &mut Vec<u8>,
     ryu_buf: &mut ryu::Buffer,
 ) {
-    let serial = datetime_to_excel_serial(dt);
-    
-    // Handle NaN from invalid dates
-    if !serial.is_finite() {
-        buf.extend_from_slice(b"<c r=\"");
-        buf.extend_from_slice(cell_ref);
-        if let Some(sid) = style_id {
-            buf.extend_from_slice(b"\" s=\"");
-            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
-        }
-        buf.extend_from_slice(b"\"/>");
-        return;
-    }
-    
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     buf.extend_from_slice(b"\" s=\"");
     buf.extend_from_slice(itoa::Buffer::new().format(style_id.unwrap_or(1)).as_bytes());
     buf.extend_from_slice(b"\"><v>");
-    buf.extend_from_slice(ryu_buf.format(serial).as_bytes());
+    buf.extend_from_slice(ryu_buf.format(datetime_to_excel_serial(dt)).as_bytes());
     buf.extend_from_slice(b"</v></c>");
 }
 
@@ -1227,24 +1245,17 @@ pub fn generate_sheet_xml_from_dict(
                     buf.extend_from_slice(b"</t></is></c>");
                 }
                 CellValue::Number(n) => {
-                    // Handle NaN and infinity - write empty cell
-                    if !n.is_finite() {
-                        buf.extend_from_slice(b"<c r=\"");
-                        buf.extend_from_slice(cell_ref_slice);
-                        buf.extend_from_slice(b"\"/>");
+                    buf.extend_from_slice(b"<c r=\"");
+                    buf.extend_from_slice(cell_ref_slice);
+                    buf.extend_from_slice(b"\"><v>");
+                    
+                    let abs = n.abs();
+                    if n.fract() == 0.0 && abs < 9007199254740992.0 && abs > 0.0 {
+                        buf.extend_from_slice(cell_int_buf.format(*n as i64).as_bytes());
                     } else {
-                        buf.extend_from_slice(b"<c r=\"");
-                        buf.extend_from_slice(cell_ref_slice);
-                        buf.extend_from_slice(b"\"><v>");
-                        
-                        let abs = n.abs();
-                        if n.fract() == 0.0 && abs < 9007199254740992.0 && abs > 0.0 {
-                            buf.extend_from_slice(cell_int_buf.format(*n as i64).as_bytes());
-                        } else {
-                            buf.extend_from_slice(ryu_buf.format(*n).as_bytes());
-                        }
-                        buf.extend_from_slice(b"</v></c>");
+                        buf.extend_from_slice(ryu_buf.format(*n).as_bytes());
                     }
+                    buf.extend_from_slice(b"</v></c>");
                 }
                 CellValue::Bool(b) => {
                     buf.extend_from_slice(b"<c r=\"");

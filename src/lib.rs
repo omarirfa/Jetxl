@@ -152,6 +152,7 @@ fn write_sheet_arrow(
         cell_styles: Vec::new(),
         formulas: Vec::new(),
         conditional_formats: Vec::new(),
+        cond_format_dxf_ids: HashMap::new(), 
     };
 
     // Parse data validations
@@ -180,11 +181,11 @@ fn write_sheet_arrow(
     }
 
     // Parse conditional formats
-    if let Some(cond_formats) = conditional_formats {
-        for cf_dict in cond_formats {
-            if let Ok(cond_format) = extract_conditional_format(&cf_dict) {
-                config.conditional_formats.push(cond_format);
-            }
+    if !config.conditional_formats.is_empty() {
+        let mut registry = StyleRegistry::new();
+        for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
+            let dxf_id = registry.register_dxf(&cond_format.style);
+            config.cond_format_dxf_ids.insert(idx, dxf_id);
         }
     }
 
@@ -336,10 +337,7 @@ fn extract_data_validation(dict: &Bound<PyDict>) -> PyResult<DataValidation> {
     })
 }
 
-fn extract_cell_style(dict: &Bound<PyDict>) -> PyResult<CellStyleMap> {
-    let row: usize = dict.get_item("row")?.unwrap().extract()?;
-    let col: usize = dict.get_item("col")?.unwrap().extract()?;
-    
+fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
     let mut cell_style = CellStyle {
         font: None,
         fill: None,
@@ -395,7 +393,6 @@ fn extract_cell_style(dict: &Bound<PyDict>) -> PyResult<CellStyleMap> {
             })
         };
         
-        // Parse each side separately to avoid borrow checker issues
         let left = if let Some(side) = border_dict.get_item("left")? {
             if let Ok(side_dict) = side.downcast::<PyDict>() {
                 parse_side(side_dict).ok()
@@ -483,7 +480,15 @@ fn extract_cell_style(dict: &Bound<PyDict>) -> PyResult<CellStyleMap> {
         cell_style.number_format = parse_number_format(&fmt_str);
     }
     
-    Ok(CellStyleMap { row, col, style: cell_style })
+    Ok(cell_style)
+}
+
+fn extract_cell_style(dict: &Bound<PyDict>) -> PyResult<CellStyleMap> {
+    let row: usize = dict.get_item("row")?.unwrap().extract()?;
+    let col: usize = dict.get_item("col")?.unwrap().extract()?;
+    let style = extract_cell_style_inner(dict)?;
+    
+    Ok(CellStyleMap { row, col, style })
 }
 
 fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalFormat> {
@@ -534,11 +539,12 @@ fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalForma
         _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid rule type")),
     };
     
-    // Extract style from dict if provided, otherwise use default
+    // Extract style or use default
     let style = if let Some(style_dict) = dict.get_item("style")? {
-        extract_cell_style(style_dict.downcast::<PyDict>()?)?.style
+        let style_dict = style_dict.downcast::<PyDict>()?;
+        extract_cell_style_inner(style_dict)?
     } else {
-        // Default red bold style
+        // Default: red bold text
         CellStyle {
             font: Some(FontStyle {
                 bold: true,
