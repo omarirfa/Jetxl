@@ -142,8 +142,9 @@ pub fn xml_escape_simd(input: &[u8], output: &mut Vec<u8>) {
     }
 }
 
-pub fn generate_content_types(sheet_names: &[&str]) -> String {
-    let mut xml = String::with_capacity(800 + sheet_names.len() * 150);
+pub fn generate_content_types(sheet_names: &[&str], tables_per_sheet: &[usize]) -> String {
+    let total_tables: usize = tables_per_sheet.iter().sum();
+    let mut xml = String::with_capacity(800 + sheet_names.len() * 150 + total_tables * 100);
     xml.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
@@ -159,6 +160,17 @@ pub fn generate_content_types(sheet_names: &[&str]) -> String {
         xml.push_str("<Override PartName=\"/xl/worksheets/sheet");
         xml.push_str(&i.to_string());
         xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+    }
+
+    // Add table content types
+    let mut table_id = 1;
+    for &table_count in tables_per_sheet { 
+        for _ in 0..table_count {
+            xml.push_str("<Override PartName=\"/xl/tables/table");
+            xml.push_str(&table_id.to_string());
+            xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/>");
+            table_id += 1;
+        }
     }
 
     xml.push_str("</Types>");
@@ -243,6 +255,116 @@ pub fn generate_worksheet_rels(hyperlinks: &[(String, usize)]) -> Option<String>
 
     xml.push_str("</Relationships>");
     Some(xml)
+}
+
+/// Generate worksheet relationships with table support
+pub fn generate_worksheet_rels_with_tables(
+    hyperlinks: &[(String, usize)],
+    tables: &[(String, String)], // (rId, target)
+) -> String {
+    let mut xml = String::with_capacity(300 + hyperlinks.len() * 150 + tables.len() * 150);
+    xml.push_str(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+    );
+
+    // Hyperlinks
+    for (url, idx) in hyperlinks {
+        xml.push_str("<Relationship Id=\"rId");
+        xml.push_str(&idx.to_string());
+        xml.push_str("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"");
+        xml.push_str(url);
+        xml.push_str("\" TargetMode=\"External\"/>");
+    }
+
+    // Tables (no TargetMode for internal relationships)
+    for (rid, target) in tables {
+        xml.push_str("<Relationship Id=\"");
+        xml.push_str(rid);
+        xml.push_str("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"");
+        xml.push_str(target);
+        xml.push_str("\"/>");
+    }
+
+    xml.push_str("</Relationships>");
+    xml
+}
+
+/// Generate table XML file
+pub fn generate_table_xml(
+    table: &ExcelTable,
+    table_id: u32,
+    column_names: &[String],
+) -> String {
+    let (start_row, start_col, end_row, end_col) = table.range;
+    
+    let mut xml = String::with_capacity(1000);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<table xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" id=\"");
+    xml.push_str(&table_id.to_string());
+    xml.push_str("\" name=\"");
+    xml.push_str(&table.name);
+    xml.push_str("\" displayName=\"");
+    xml.push_str(&table.display_name);
+    xml.push_str("\" ref=\"");
+    
+    // Write range reference
+    let mut buf = Vec::with_capacity(32);
+    write_cell_ref(start_col, start_row, &mut buf);
+    buf.push(b':');
+    write_cell_ref(end_col, end_row, &mut buf);
+    xml.push_str(&String::from_utf8_lossy(&buf));
+    
+    xml.push_str("\" totalsRowShown=\"");
+    xml.push_str(if table.show_totals_row { "1" } else { "0" });
+    xml.push_str("\">");
+    
+    // AutoFilter (only if header row is shown and no totals row)
+    if table.show_header_row {
+        xml.push_str("<autoFilter ref=\"");
+        buf.clear();
+        write_cell_ref(start_col, start_row, &mut buf);
+        buf.push(b':');
+        write_cell_ref(end_col, end_row, &mut buf);
+        xml.push_str(&String::from_utf8_lossy(&buf));
+        xml.push_str("\"/>");
+    }
+    
+    // Table columns
+    let num_cols = end_col - start_col + 1;
+    xml.push_str("<tableColumns count=\"");
+    xml.push_str(&num_cols.to_string());
+    xml.push_str("\">");
+    
+    for (idx, col_name) in column_names.iter().enumerate() {
+        buf.clear();
+        xml.push_str("<tableColumn id=\"");
+        xml.push_str(&(idx + 1).to_string());
+        xml.push_str("\" name=\"");
+        xml_escape_simd(col_name.as_bytes(), &mut buf);
+        xml.push_str(&String::from_utf8_lossy(&buf));
+        xml.push_str("\"/>");
+    }
+    
+    xml.push_str("</tableColumns>");
+    
+    // Table style
+    if let Some(ref style) = table.style_name {
+        xml.push_str("<tableStyleInfo name=\"");
+        xml.push_str(style);
+        xml.push_str("\" showFirstColumn=\"");
+        xml.push_str(if table.show_first_column { "1" } else { "0" });
+        xml.push_str("\" showLastColumn=\"");
+        xml.push_str(if table.show_last_column { "1" } else { "0" });
+        xml.push_str("\" showRowStripes=\"");
+        xml.push_str(if table.show_row_stripes { "1" } else { "0" });
+        xml.push_str("\" showColumnStripes=\"");
+        xml.push_str(if table.show_column_stripes { "1" } else { "0" });
+        xml.push_str("\"/>");
+    }
+    
+    xml.push_str("</table>");
+    xml
 }
 
 /// Calculate exact XML buffer size for Arrow data
@@ -626,6 +748,21 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
+
+    // TABLE PARTS (must come after sheetData, before autoFilter)
+    if !config.tables.is_empty() {
+        buf.extend_from_slice(b"<tableParts count=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(config.tables.len()).as_bytes());
+        buf.extend_from_slice(b"\">");
+        
+        for idx in 0..config.tables.len() {
+            buf.extend_from_slice(b"<tablePart r:id=\"rIdTable");
+            buf.extend_from_slice(itoa::Buffer::new().format(idx + 1).as_bytes());
+            buf.extend_from_slice(b"\"/>");
+        }
+        
+        buf.extend_from_slice(b"</tableParts>");
+    }
     // 6. AUTOFILTER
     if config.auto_filter && total_rows > 0 {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
@@ -772,10 +909,14 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
         
         match &format.rule {
             ConditionalRule::CellValue { operator, value } => {
-                let dxf_id = config.cond_format_dxf_ids.get(&idx).copied().unwrap_or(0);
-                buf.extend_from_slice(b"cellIs\" dxfId=\"");
-                buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
-                buf.extend_from_slice(b"\" operator=\"");
+                // Get DXF ID from the properly built map
+                if let Some(&dxf_id) = config.cond_format_dxf_ids.get(&idx) {
+                    buf.extend_from_slice(b"cellIs\" dxfId=\"");
+                    buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
+                    buf.extend_from_slice(b"\" operator=\"");
+                } else {
+                    buf.extend_from_slice(b"cellIs\" operator=\"");
+                }
                 let op_str = match operator {
                     ComparisonOperator::GreaterThan => "greaterThan",
                     ComparisonOperator::LessThan => "lessThan",
@@ -824,10 +965,13 @@ fn write_conditional_formatting(buf: &mut Vec<u8>, formats: &[ConditionalFormat]
                 buf.extend_from_slice(b"</dataBar></cfRule>");
             }
             ConditionalRule::Top10 { rank, bottom } => {
-                let dxf_id = config.cond_format_dxf_ids.get(&idx).copied().unwrap_or(0);
-                buf.extend_from_slice(b"top10\" dxfId=\"");
-                buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
-                buf.extend_from_slice(b"\" priority=\"");
+                if let Some(&dxf_id) = config.cond_format_dxf_ids.get(&idx) {
+                    buf.extend_from_slice(b"top10\" dxfId=\"");
+                    buf.extend_from_slice(itoa::Buffer::new().format(dxf_id).as_bytes());
+                    buf.extend_from_slice(b"\" priority=\"");
+                } else {
+                    buf.extend_from_slice(b"top10\" priority=\"");
+                }
                 buf.extend_from_slice(itoa::Buffer::new().format(format.priority).as_bytes());
                 buf.extend_from_slice(b"\" rank=\"");
                 buf.extend_from_slice(itoa::Buffer::new().format(*rank).as_bytes());

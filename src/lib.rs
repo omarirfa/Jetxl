@@ -17,6 +17,12 @@ use std::collections::HashMap;
 
 #[pyfunction]
 #[pyo3(signature = (columns, filename, sheet_name = None))]
+/// Write dict-based data to Excel (legacy API).
+///
+/// Args:
+///     columns (dict): Dictionary of column_name -> list of values
+///     filename (str): Output file path
+///     sheet_name (str, optional): Sheet name
 fn write_sheet(
     py: Python,
     columns: Bound<PyDict>,
@@ -89,7 +95,31 @@ fn write_sheets(
     cell_styles = None,
     formulas = None,
     conditional_formats = None,
+    tables = None, 
 ))]
+
+/// Write Arrow data to an Excel file with advanced formatting options.
+/// 
+/// Args:
+///     arrow_data: PyArrow Table or RecordBatch
+///     filename (str): Output file path
+///     sheet_name (str, optional): Sheet name. Defaults to "Sheet1"
+///     auto_filter (bool): Enable autofilter on headers
+///     freeze_rows (int): Number of rows to freeze
+///     freeze_cols (int): Number of columns to freeze
+///     auto_width (bool): Auto-calculate column widths
+///     styled_headers (bool): Apply bold+gray style to headers
+///     column_widths (dict[str, float], optional): Manual column widths by name
+///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
+///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
+///     data_validations (list[dict], optional): Data validation rules
+///     hyperlinks (list[tuple], optional): List of (row, col, url, display_text)
+///     row_heights (dict[int, float], optional): Custom row heights
+///     cell_styles (list[dict], optional): Custom cell styles with font, fill, border, alignment
+///     formulas (list[tuple], optional): List of (row, col, formula, cached_value)
+///     conditional_formats (list[dict], optional): Conditional formatting rules
+///     tables (list[dict], optional): Excel table definitions
+
 #[allow(clippy::too_many_arguments)]
 fn write_sheet_arrow(
     py: Python,
@@ -110,6 +140,7 @@ fn write_sheet_arrow(
     cell_styles: Option<Vec<Bound<PyDict>>>,
     formulas: Option<Vec<(usize, usize, String, Option<String>)>>,
     conditional_formats: Option<Vec<Bound<PyDict>>>,
+    tables: Option<Vec<Bound<PyDict>>>,
 ) -> PyResult<()> {
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
@@ -153,6 +184,7 @@ fn write_sheet_arrow(
         formulas: Vec::new(),
         conditional_formats: Vec::new(),
         cond_format_dxf_ids: HashMap::new(), 
+        tables: Vec::new(), 
     };
 
     // Parse data validations
@@ -181,13 +213,31 @@ fn write_sheet_arrow(
     }
 
     // Parse conditional formats
-    if !config.conditional_formats.is_empty() {
-        let mut registry = StyleRegistry::new();
-        for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-            let dxf_id = registry.register_dxf(&cond_format.style);
-            config.cond_format_dxf_ids.insert(idx, dxf_id);
+    if let Some(cond_formats) = conditional_formats {
+        for cond_dict in cond_formats {
+            if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                config.conditional_formats.push(cond_format);
+            }
         }
     }
+
+    // Parse tables
+    if let Some(tables_vec) = tables {
+        for table_dict in tables_vec {
+            if let Ok(table) = extract_table(&table_dict) {
+                config.tables.push(table);
+            }
+        }
+    }
+
+//     // Build DXF IDs for conditional formats
+//     if !config.conditional_formats.is_empty() {
+//         let mut temp_registry = StyleRegistry::new();
+//         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
+//             let dxf_id = temp_registry.register_dxf(&cond_format.style);
+//             config.cond_format_dxf_ids.insert(idx, dxf_id);
+//     }
+// }
 
     py.detach(|| {
         writer::write_single_sheet_arrow_with_config(&batches, &name, &filename, &config)
@@ -197,6 +247,12 @@ fn write_sheet_arrow(
 
 #[pyfunction]
 #[pyo3(signature = (arrow_sheets, filename, num_threads))]
+/// Write multiple Arrow tables to Excel with parallel processing.
+///
+/// Args:
+///     arrow_sheets (list[tuple]): List of (arrow_data, sheet_name) tuples
+///     filename (str): Output file path
+///     num_threads (int): Number of parallel threads for XML generation
 fn write_sheets_arrow(
     py: Python,
     arrow_sheets: Vec<(Bound<PyAny>, String)>, 
@@ -583,4 +639,29 @@ fn jetxl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_sheets_arrow, m)?)?;
     
     Ok(())
+}
+
+fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
+    let name: String = dict.get_item("name")?.unwrap().extract()?;
+    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
+    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
+    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+    let mut table = ExcelTable::new(name, (start_row, start_col, end_row, end_col));
+    
+    if let Some(display_name) = dict.get_item("display_name")?.and_then(|v| v.extract().ok()) {
+        table.display_name = display_name;
+    }
+    
+    if let Some(style) = dict.get_item("style")?.and_then(|v| v.extract().ok()) {
+        table.style_name = Some(style);
+    }
+    
+    table.show_first_column = dict.get_item("show_first_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    table.show_last_column = dict.get_item("show_last_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    table.show_row_stripes = dict.get_item("show_row_stripes")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+    table.show_column_stripes = dict.get_item("show_column_stripes")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    
+    Ok(table)
 }
