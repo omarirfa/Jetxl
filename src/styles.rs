@@ -171,6 +171,39 @@ pub struct ConditionalFormat {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExcelTable {
+    pub name: String,
+    pub display_name: String,
+    pub range: (usize, usize, usize, usize), // start_row, start_col, end_row, end_col
+    pub style_name: Option<String>, // "TableStyleMedium2", etc.
+    pub show_first_column: bool,
+    pub show_last_column: bool,
+    pub show_row_stripes: bool,
+    pub show_column_stripes: bool,
+    pub show_header_row: bool,
+    pub show_totals_row: bool,
+    pub column_names: Vec<String>, // Auto-generated from headers if not provided
+}
+
+impl ExcelTable {
+    pub fn new(name: String, range: (usize, usize, usize, usize)) -> Self {
+        Self {
+            display_name: name.clone(),
+            name,
+            range,
+            style_name: Some("TableStyleMedium2".to_string()),
+            show_first_column: false,
+            show_last_column: false,
+            show_row_stripes: true,
+            show_column_stripes: false,
+            show_header_row: true,
+            show_totals_row: false,
+            column_names: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ConditionalRule {
     CellValue { operator: ComparisonOperator, value: String },
     ColorScale { min_color: String, max_color: String, mid_color: Option<String> },
@@ -206,6 +239,7 @@ pub struct StyleConfig {
     pub formulas: Vec<Formula>,
     pub conditional_formats: Vec<ConditionalFormat>,
     pub cond_format_dxf_ids: HashMap<usize, u32>,
+    pub tables: Vec<ExcelTable>,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +267,7 @@ impl Default for StyleConfig {
             formulas: Vec::new(),
             conditional_formats: Vec::new(),
             cond_format_dxf_ids: HashMap::new(),
+            tables: Vec::new(),
         }
     }
 }
@@ -341,14 +376,6 @@ impl StyleRegistry {
     }
     
     pub fn register_dxf(&mut self, style: &CellStyle) -> u32 {
-        for (idx, dxf) in self.dxfs.iter().enumerate() {
-            if dxf.font == style.font 
-                && dxf.fill == style.fill 
-                && dxf.border == style.border 
-                && dxf.number_format == style.number_format {
-                return idx as u32;
-            }
-        }
         self.dxfs.push(style.clone());
         (self.dxfs.len() - 1) as u32
     }
@@ -511,6 +538,8 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     for dxf in &registry.dxfs {
         xml.push_str("  <dxf>");
         
+        // OOXML spec order: font, numFmt, fill, alignment, border, protection
+        
         if let Some(ref font) = dxf.font {
             xml.push_str("<font>");
             if font.bold { xml.push_str("<b/>"); }
@@ -519,28 +548,45 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             if let Some(ref color) = font.color {
                 xml.push_str(&format!("<color rgb=\"{}\"/>", color));
             }
-            if let Some(size) = font.size {
-                xml.push_str(&format!("<sz val=\"{}\"/>", size));
-            }
             xml.push_str("</font>");
         }
         
+        if let Some(ref fmt) = dxf.number_format {
+            xml.push_str(&format!("<numFmt numFmtId=\"{}\" formatCode=\"\"/>", fmt.num_fmt_id()));
+        }
+        
         if let Some(ref fill) = dxf.fill {
-            xml.push_str("<fill>");
-            match fill.pattern_type {
-                PatternType::Solid => {
-                    xml.push_str("<patternFill patternType=\"solid\">");
-                    if let Some(ref fg) = fill.fg_color {
-                        xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
-                    }
-                    if let Some(ref bg) = fill.bg_color {
-                        xml.push_str(&format!("<bgColor rgb=\"{}\"/>", bg));
-                    }
-                    xml.push_str("</patternFill>");
+            xml.push_str("<fill><patternFill patternType=\"solid\">");
+            if let Some(ref fg) = fill.fg_color {
+                xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
+                if fill.bg_color.is_none() {
+                    xml.push_str("<bgColor rgb=\"FFFFFFFF\"/>");  // White, not indexed
                 }
-                _ => xml.push_str("<patternFill patternType=\"none\"/>"),
             }
-            xml.push_str("</fill>");
+            if let Some(ref bg) = fill.bg_color {
+                xml.push_str(&format!("<bgColor rgb=\"{}\"/>", bg));
+            }
+            xml.push_str("</patternFill></fill>");
+        }
+        
+        if let Some(ref align) = dxf.alignment {
+            xml.push_str("<alignment");
+            if let Some(ref h) = align.horizontal {
+                xml.push_str(&format!(" horizontal=\"{}\"", match h {
+                    HorizontalAlignment::Left => "left",
+                    HorizontalAlignment::Center => "center",
+                    HorizontalAlignment::Right => "right",
+                    HorizontalAlignment::Justify => "justify",
+                }));
+            }
+            if let Some(ref v) = align.vertical {
+                xml.push_str(&format!(" vertical=\"{}\"", match v {
+                    VerticalAlignment::Top => "top",
+                    VerticalAlignment::Center => "center",
+                    VerticalAlignment::Bottom => "bottom",
+                }));
+            }
+            xml.push_str("/>");
         }
         
         if let Some(ref border) = dxf.border {
@@ -550,10 +596,6 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             write_border_side(&mut xml, "top", &border.top);
             write_border_side(&mut xml, "bottom", &border.bottom);
             xml.push_str("</border>");
-        }
-        
-        if let Some(ref fmt) = dxf.number_format {
-            xml.push_str(&format!("<numFmt numFmtId=\"{}\"/>", fmt.num_fmt_id()));
         }
         
         xml.push_str("</dxf>\n");
