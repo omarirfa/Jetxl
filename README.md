@@ -1,5 +1,4 @@
-# Jetxl ✈
-
+# Jetxl ✈️
 **Blazingly fast Excel (XLSX) writer for Python, powered by Rust**
 
 Jetxl is a high-performance library for creating Excel files from Python with native support for Arrow, Polars, and Pandas DataFrames. Built from the ground up in Rust for maximum speed and efficiency.
@@ -9,7 +8,7 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 - 🚀 **Ultra-fast**: 10-100x faster than traditional Python Excel libraries
 - 🔄 **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
 - 🎨 **Rich formatting**: Fonts, colors, borders, alignment, number formats
-- 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks
+- 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts
 - 🧵 **Multi-threaded**: Parallel sheet generation for multi-sheet workbooks
 - 💾 **Memory efficient**: Streaming XML generation with minimal memory overhead
 - 🐻‍❄️🐼 **Framework agnostic**: Works seamlessly with Polars, Pandas, PyArrow, and native Python dicts
@@ -19,9 +18,8 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 ```bash
 pip install jetxl
 
-## Install with uv (recommended)
-
-## uv pip install jetxl
+# Install with uv (recommended)
+# uv pip install jetxl
 ```
 
 ## 🚀 Quick Start
@@ -39,8 +37,8 @@ df = pl.DataFrame({
     "Salary": [50000.0, 60000.0, 75000.0]
 })
 
-# Write to Excel (PyCapsule support - no to_arrow() needed!)
-jet.write_sheet_arrow(df, "output.xlsx")
+# Write to Excel (requires to_arrow() conversion)
+jet.write_sheet_arrow(df.to_arrow(), "output.xlsx")
 ```
 
 ### Using Pandas
@@ -116,7 +114,9 @@ jet.write_sheet_arrow(
     row_heights=None,              # Dict[int, float] - row heights
     cell_styles=None,              # List[dict] - individual cell styles
     formulas=None,                 # List[(row, col, formula, cached_value)]
-    conditional_formats=None       # List[dict] - conditional formatting
+    conditional_formats=None,      # List[dict] - conditional formatting
+    tables=None,                   # List[dict] - Excel table definitions
+    charts=None                    # List[dict] - Excel chart definitions
 )
 ```
 
@@ -126,13 +126,21 @@ Write multiple sheets with parallel processing.
 
 ```python
 sheets = [
-    (df1, "Sales"),
-    (df2, "Expenses"),
-    (df3, "Summary")
+    {
+        "data": df1.to_arrow(),
+        "name": "Sales",
+        "auto_filter": True,
+        "charts": [...]  # Optional charts for this sheet
+    },
+    {
+        "data": df2.to_arrow(),
+        "name": "Expenses",
+        "freeze_rows": 1
+    }
 ]
 
 jet.write_sheets_arrow(
-    sheets,        # List[(DataFrame, sheet_name)]
+    sheets,        # List[dict] with data, name, and optional formatting
     "output.xlsx",
     num_threads=4  # Number of threads for parallel processing
 )
@@ -146,7 +154,8 @@ jet.write_sheets_arrow(
 jet.write_sheet(
     columns,       # Dict[str, List] - column name to values
     filename,      # Output file path
-    sheet_name=None  # Sheet name
+    sheet_name=None,  # Sheet name
+    charts=None    # List[dict] - Excel chart definitions
 )
 ```
 
@@ -157,7 +166,6 @@ sheets = [
     {"name": "Sales", "columns": sales_data},
     {"name": "Expenses", "columns": expenses_data}
 ]
-
 jet.write_sheets(sheets, "output.xlsx", num_threads=4)
 ```
 
@@ -176,7 +184,7 @@ df = pl.DataFrame({
 })
 
 jet.write_sheet_arrow(
-    df,
+    df.to_arrow(),
     "formatted.xlsx",
     auto_filter=True,           # Add filter dropdowns
     freeze_rows=1,              # Freeze header row
@@ -189,7 +197,7 @@ jet.write_sheet_arrow(
 
 ```python
 jet.write_sheet_arrow(
-    df,
+    df.to_arrow(),
     "formatted.xlsx",
     column_formats={
         "Price": "currency",           # $1.50
@@ -217,7 +225,7 @@ jet.write_sheet_arrow(
 
 ```python
 jet.write_sheet_arrow(
-    df,
+    df.to_arrow(),
     "sized.xlsx",
     column_widths={
         "Product": 20.0,
@@ -243,11 +251,11 @@ cell_styles = [
             "bold": True,
             "italic": False,
             "size": 14.0,
-            "color": "FFFF0000",  # Red (RGB: AARRGGBB)
+            "color": "FFFF0000",  # Red (ARGB format: AA=alpha, RR=red, GG=green, BB=blue)
             "name": "Arial"
         },
         "fill": {
-            "pattern": "solid",
+            "pattern": "solid",  # Options: "solid", "gray125", "none"
             "fg_color": "FFFFFF00",  # Yellow
             "bg_color": None
         },
@@ -267,10 +275,633 @@ cell_styles = [
     }
 ]
 
-jet.write_sheet_arrow(df, "styled.xlsx", cell_styles=cell_styles)
+jet.write_sheet_arrow(df.to_arrow(), "styled.xlsx", cell_styles=cell_styles)
 ```
 
 **Border styles:** `thin`, `medium`, `thick`, `double`, `dotted`, `dashed`
+
+**Color Format Guide:**
+- Colors use ARGB hexadecimal format: `AARRGGBB`
+- `AA` = Alpha (transparency): `FF` = fully opaque, `00` = fully transparent
+- `RR` = Red component: `00` = no red, `FF` = maximum red
+- `GG` = Green component: `00` = no green, `FF` = maximum green
+- `BB` = Blue component: `00` = no blue, `FF` = maximum blue
+
+Common colors: `FFFF0000` (red), `FF00FF00` (green), `FF0000FF` (blue), `FFFFFF00` (yellow), `FF000000` (black), `FFFFFFFF` (white)
+
+For more colors and an interactive picker, see the [External Resources](#-external-resources--references) section below.
+
+## 📊 Excel Tables
+
+Create formatted Excel tables with built-in styles, sorting, and filtering capabilities.
+
+### Basic Table
+
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Product": ["Apple", "Banana", "Cherry", "Date"],
+    "Price": [1.50, 0.75, 2.25, 3.00],
+    "Quantity": [100, 150, 80, 60]
+})
+
+tables = [{
+    "name": "ProductTable",           # Internal table name
+    "display_name": "Product Data",   # Display name (optional)
+    "start_row": 1,                   # Table starts at row 1 (header)
+    "start_col": 0,                   # First column
+    "end_row": 4,                     # Last row (including header)
+    "end_col": 2,                     # Last column
+    "style": "TableStyleMedium2",     # Excel table style
+    "show_first_column": False,       # Bold first column
+    "show_last_column": False,        # Bold last column
+    "show_row_stripes": True,         # Alternating row colors
+    "show_column_stripes": False      # Alternating column colors
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "table.xlsx",
+    tables=tables
+)
+```
+
+### Available Table Styles
+
+Excel provides many built-in table styles that you can use with Jetxl. The styles are organized into three categories:
+
+**Light Table Styles** (Minimal emphasis, subtle colors)
+- `TableStyleLight1` through `TableStyleLight21`
+- Best for: Professional reports, financial statements, clean presentations
+
+**Medium Table Styles** (Moderate emphasis, balanced design)
+- `TableStyleMedium1` through `TableStyleMedium28`
+- Best for: Data analysis, dashboards, general-purpose tables
+
+**Dark Table Styles** (Strong emphasis, high contrast)
+- `TableStyleDark1` through `TableStyleDark11`
+- Best for: Executive summaries, presentations, highlighting key data
+
+**Visual Reference**: To see examples of all table styles, visit [Microsoft's Format an Excel Table guide](https://support.microsoft.com/en-us/office/format-an-excel-table-6789619f-c889-495c-99c2-2f971c0e2370) which includes screenshots of each style.
+
+**Additional Resources**:
+- [Create and format Excel tables](https://support.microsoft.com/en-us/office/create-and-format-tables-e81aa349-b006-4f8a-9806-5af9df0ac664) - Official Microsoft documentation
+- [Excel table overview](https://support.microsoft.com/en-us/office/overview-of-excel-tables-7ab0bb7d-3a9e-4b56-a3c9-6c94334e492c) - Complete guide to table features
+
+### Multiple Tables in One Sheet
+
+```python
+# Create two separate tables in the same sheet
+tables = [
+    {
+        "name": "SalesTable",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 10,
+        "end_col": 3,
+        "style": "TableStyleMedium9"
+    },
+    {
+        "name": "SummaryTable",
+        "start_row": 12,
+        "start_col": 0,
+        "end_row": 15,
+        "end_col": 2,
+        "style": "TableStyleLight16"
+    }
+]
+
+jet.write_sheet_arrow(df.to_arrow(), "multi_tables.xlsx", tables=tables)
+```
+
+### Table Configuration Options
+
+```python
+table = {
+    "name": "MyTable",                # Required: Unique table identifier
+    "display_name": "My Data",        # Optional: User-friendly name
+    "start_row": 1,                   # Required: First row (1-indexed)
+    "start_col": 0,                   # Required: First column (0-indexed)
+    "end_row": 100,                   # Required: Last row
+    "end_col": 5,                     # Required: Last column
+    "style": "TableStyleMedium2",     # Optional: Table style name
+    "show_first_column": False,       # Optional: Bold first column (default: False)
+    "show_last_column": False,        # Optional: Bold last column (default: False)
+    "show_row_stripes": True,         # Optional: Alternating rows (default: True)
+    "show_column_stripes": False      # Optional: Alternating columns (default: False)
+}
+```
+
+**Note:** Excel tables automatically include:
+- Header row with filter dropdowns
+- Structured references for formulas
+- Automatic formatting and styling
+- Sort and filter capabilities
+
+## 📊 Excel Charts
+
+Create professional charts and visualizations directly in your Excel files. Jetxl supports six chart types with extensive customization options.
+
+### Chart Types
+
+Jetxl supports the following chart types:
+- **Column Chart** - Vertical bars, ideal for comparing values across categories
+- **Bar Chart** - Horizontal bars, good for comparing items
+- **Line Chart** - Shows trends over time or continuous data
+- **Pie Chart** - Displays proportions of a whole
+- **Scatter Chart** - Shows relationships between two numerical variables
+- **Area Chart** - Similar to line chart but with filled areas
+
+### Basic Column Chart
+
+```python
+import polars as pl
+import jetxl as jet
+
+# Create sample data
+df = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar", "Apr", "May"],
+    "Sales": [1000, 1500, 1200, 1800, 2000],
+    "Costs": [800, 900, 850, 1000, 1100]
+})
+
+# Define a column chart
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,           # Data starts at row 1 (header)
+    "start_col": 0,           # First column (Month)
+    "end_row": 5,             # Last data row
+    "end_col": 2,             # Last column (Costs)
+    "from_col": 4,            # Chart position: start column
+    "from_row": 1,            # Chart position: start row
+    "to_col": 12,             # Chart position: end column
+    "to_row": 15,             # Chart position: end row
+    "title": "Monthly Sales and Costs",
+    "category_col": 0,        # Use first column (Month) for X-axis
+    "show_legend": True,
+    "x_axis_title": "Month",
+    "y_axis_title": "Amount ($)"
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "chart_example.xlsx",
+    charts=charts
+)
+```
+
+### Chart Configuration
+
+Every chart requires these basic parameters:
+
+```python
+chart = {
+    # Required: Chart type
+    "chart_type": "column",  # column, bar, line, pie, scatter, area
+    
+    # Required: Data range (1-indexed for rows, 0-indexed for columns)
+    "start_row": 1,          # First data row (including header)
+    "start_col": 0,          # First data column
+    "end_row": 10,           # Last data row
+    "end_col": 3,            # Last data column
+    
+    # Required: Chart position on worksheet
+    "from_col": 5,           # Starting column for chart
+    "from_row": 1,           # Starting row for chart
+    "to_col": 15,            # Ending column for chart
+    "to_row": 20,            # Ending row for chart
+    
+    # Optional: Chart customization
+    "title": "My Chart",                # Chart title
+    "category_col": 0,                  # Column to use for category axis (X-axis)
+    "series_names": ["Series 1", "Series 2"],  # Custom series names
+    "show_legend": True,                # Show/hide legend
+    "legend_position": "right",         # Legend position: "right", "left", "top", "bottom", "none"
+    "x_axis_title": "Categories",       # X-axis label
+    "y_axis_title": "Values"           # Y-axis label
+}
+```
+
+### Column Chart
+
+Vertical bars comparing values across categories.
+
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Quarter": ["Q1", "Q2", "Q3", "Q4"],
+    "Revenue": [25000, 28000, 31000, 35000],
+    "Profit": [5000, 6500, 7200, 8500]
+})
+
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 2,
+    "from_col": 4,
+    "from_row": 1,
+    "to_col": 12,
+    "to_row": 15,
+    "title": "Quarterly Performance",
+    "category_col": 0,
+    "series_names": ["Revenue", "Profit"],
+    "x_axis_title": "Quarter",
+    "y_axis_title": "Amount ($)",
+    "show_legend": True
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "column_chart.xlsx", charts=charts)
+```
+
+### Bar Chart
+
+Horizontal bars, useful for comparing many items or long category names.
+
+```python
+df = pl.DataFrame({
+    "Product": ["Widget A", "Widget B", "Widget C", "Widget D"],
+    "Units Sold": [150, 230, 180, 290]
+})
+
+charts = [{
+    "chart_type": "bar",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 1,
+    "from_col": 3,
+    "from_row": 1,
+    "to_col": 10,
+    "to_row": 12,
+    "title": "Product Sales Comparison",
+    "category_col": 0,
+    "x_axis_title": "Units",
+    "y_axis_title": "Product"
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "bar_chart.xlsx", charts=charts)
+```
+
+### Line Chart
+
+Perfect for showing trends over time or continuous data.
+
+```python
+df = pl.DataFrame({
+    "Week": ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"],
+    "Website": [1200, 1350, 1280, 1450, 1520],
+    "Mobile": [800, 920, 1050, 1180, 1300],
+    "Desktop": [400, 430, 230, 270, 220]
+})
+
+charts = [{
+    "chart_type": "line",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 5,
+    "end_col": 3,
+    "from_col": 5,
+    "from_row": 1,
+    "to_col": 13,
+    "to_row": 16,
+    "title": "Traffic Trends by Platform",
+    "category_col": 0,
+    "series_names": ["Website", "Mobile", "Desktop"],
+    "x_axis_title": "Time Period",
+    "y_axis_title": "Visitors",
+    "show_legend": True
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "line_chart.xlsx", charts=charts)
+```
+
+### Pie Chart
+
+Displays proportions and percentages of a whole.
+
+```python
+df = pl.DataFrame({
+    "Category": ["North", "South", "East", "West"],
+    "Sales": [2500, 1800, 2200, 1500]
+})
+
+charts = [{
+    "chart_type": "pie",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 1,
+    "from_col": 3,
+    "from_row": 1,
+    "to_col": 10,
+    "to_row": 15,
+    "title": "Sales by Region",
+    "category_col": 0,  # Labels come from this column
+    "show_legend": True
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "pie_chart.xlsx", charts=charts)
+```
+
+**Note:** Pie charts typically display one data series. The first numeric column after the category column is used.
+
+### Scatter Chart
+
+Shows relationships between two numeric variables.
+
+```python
+df = pl.DataFrame({
+    "Temperature": [65, 70, 75, 80, 85, 90, 95],
+    "Ice Cream Sales": [200, 250, 280, 350, 400, 480, 550],
+    "Coffee Sales": [450, 420, 380, 340, 300, 250, 200]
+})
+
+charts = [{
+    "chart_type": "scatter",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 7,
+    "end_col": 2,
+    "from_col": 4,
+    "from_row": 1,
+    "to_col": 12,
+    "to_row": 16,
+    "title": "Sales vs Temperature",
+    "x_axis_title": "Temperature (°F)",
+    "y_axis_title": "Sales ($)",
+    "series_names": ["Ice Cream", "Coffee"],
+    "show_legend": True
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "scatter_chart.xlsx", charts=charts)
+```
+
+**Note:** For scatter charts, the first column is used for X values, and subsequent columns are Y values for each series.
+
+### Area Chart
+
+Similar to line charts but with filled areas under the lines.
+
+```python
+df = pl.DataFrame({
+    "Year": ["2019", "2020", "2021", "2022", "2023"],
+    "Product A": [1000, 1200, 1400, 1600, 1800],
+    "Product B": [800, 950, 1100, 1300, 1500],
+    "Product C": [600, 700, 850, 950, 1100]
+})
+
+charts = [{
+    "chart_type": "area",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 5,
+    "end_col": 3,
+    "from_col": 5,
+    "from_row": 1,
+    "to_col": 13,
+    "to_row": 16,
+    "title": "Product Sales Growth",
+    "category_col": 0,
+    "series_names": ["Product A", "Product B", "Product C"],
+    "x_axis_title": "Year",
+    "y_axis_title": "Revenue ($)",
+    "show_legend": True
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "area_chart.xlsx", charts=charts)
+```
+
+### Multiple Charts in One Sheet
+
+You can add multiple charts to the same worksheet:
+
+```python
+df = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar", "Apr"],
+    "Revenue": [10000, 12000, 11000, 13000],
+    "Expenses": [7000, 8000, 7500, 8500],
+    "Profit": [3000, 4000, 3500, 4500]
+})
+
+charts = [
+    {
+        # Column chart for Revenue and Expenses
+        "chart_type": "column",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 4,
+        "end_col": 2,
+        "from_col": 5,
+        "from_row": 1,
+        "to_col": 12,
+        "to_row": 15,
+        "title": "Revenue vs Expenses",
+        "category_col": 0,
+        "series_names": ["Revenue", "Expenses"]
+    },
+    {
+        # Line chart for Profit trend
+        "chart_type": "line",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 4,
+        "end_col": 0,  # Just Month column
+        "from_col": 5,
+        "from_row": 17,
+        "to_col": 12,
+        "to_row": 30,
+        "title": "Profit Trend",
+        "category_col": 0
+    }
+]
+
+jet.write_sheet_arrow(df.to_arrow(), "multiple_charts.xlsx", charts=charts)
+```
+
+### Charts with Tables
+
+Combine Excel tables with charts for interactive dashboards:
+
+```python
+df = pl.DataFrame({
+    "Product": ["Widget A", "Widget B", "Widget C", "Widget D"],
+    "Q1": [100, 150, 120, 180],
+    "Q2": [110, 160, 130, 190],
+    "Q3": [120, 170, 140, 200],
+    "Q4": [130, 180, 150, 210]
+})
+
+# Define table
+tables = [{
+    "name": "SalesData",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 4,
+    "style": "TableStyleMedium9"
+}]
+
+# Define chart
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 4,
+    "from_col": 6,
+    "from_row": 1,
+    "to_col": 14,
+    "to_row": 18,
+    "title": "Quarterly Sales by Product",
+    "category_col": 0,
+    "series_names": ["Q1", "Q2", "Q3", "Q4"]
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "table_with_chart.xlsx",
+    tables=tables,
+    charts=charts
+)
+```
+
+### Charts Across Multiple Sheets
+
+Each sheet can have its own charts:
+
+```python
+df_sales = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar"],
+    "Amount": [1000, 1500, 1200]
+})
+
+df_costs = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar"],
+    "Amount": [800, 900, 850]
+})
+
+sheets = [
+    {
+        "data": df_sales.to_arrow(),
+        "name": "Sales",
+        "charts": [{
+            "chart_type": "column",
+            "start_row": 1,
+            "start_col": 0,
+            "end_row": 3,
+            "end_col": 1,
+            "from_col": 3,
+            "from_row": 1,
+            "to_col": 10,
+            "to_row": 12,
+            "title": "Sales Trend",
+            "category_col": 0
+        }]
+    },
+    {
+        "data": df_costs.to_arrow(),
+        "name": "Costs",
+        "charts": [{
+            "chart_type": "line",
+            "start_row": 1,
+            "start_col": 0,
+            "end_row": 3,
+            "end_col": 1,
+            "from_col": 3,
+            "from_row": 1,
+            "to_col": 10,
+            "to_row": 12,
+            "title": "Cost Trend",
+            "category_col": 0
+        }]
+    }
+]
+
+jet.write_sheets_arrow(sheets, "multi_sheet_charts.xlsx", num_threads=2)
+```
+
+### Chart Positioning Guide
+
+Chart positions are specified in Excel's column/row coordinates:
+- Columns are 0-indexed (0 = A, 1 = B, 2 = C, etc.)
+- Rows are 1-indexed (1 = first row, 2 = second row, etc.)
+
+```python
+# Position a chart from D2 to L16
+chart = {
+    "from_col": 3,   # Column D (0-indexed: A=0, B=1, C=2, D=3)
+    "from_row": 2,   # Row 2
+    "to_col": 11,    # Column L (0-indexed: K=10, L=11)
+    "to_row": 16,    # Row 16
+    # ... other chart properties
+}
+```
+
+**Sizing recommendations:**
+- Small chart: 6-8 columns wide, 12-15 rows tall
+- Medium chart: 8-12 columns wide, 15-20 rows tall
+- Large chart: 12-16 columns wide, 20-30 rows tall
+
+### Chart Customization Best Practices
+
+1. **Clear Titles**: Always include descriptive chart titles
+   ```python
+   "title": "Q4 Sales Performance by Region"
+   ```
+
+2. **Axis Labels**: Add labels to help readers understand the data
+   ```python
+   "x_axis_title": "Month",
+   "y_axis_title": "Revenue (USD)"
+   ```
+
+3. **Legend Placement**: Show legends for multi-series charts and position appropriately
+   ```python
+   "show_legend": True,
+   "legend_position": "right"  # Options: "right", "left", "top", "bottom", "none"
+   ```
+
+4. **Category Columns**: Specify which column contains category labels
+   ```python
+   "category_col": 0  # First column
+   ```
+
+5. **Series Names**: Provide meaningful names for each data series
+   ```python
+   "series_names": ["2023 Sales", "2024 Sales", "Target"]
+   ```
+
+### Using Charts with Dict API (Legacy)
+
+Charts also work with the dictionary-based API:
+
+```python
+data = {
+    "Month": ["Jan", "Feb", "Mar"],
+    "Sales": [1000, 1200, 1100]
+}
+
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 3,
+    "end_col": 1,
+    "from_col": 3,
+    "from_row": 1,
+    "to_col": 10,
+    "to_row": 12,
+    "title": "Monthly Sales"
+}]
+
+jet.write_sheet(data, "legacy_chart.xlsx", charts=charts)
+```
 
 ## 🔗 Hyperlinks
 
@@ -281,10 +912,10 @@ hyperlinks = [
     (4, 2, "mailto:user@example.com", "Email Us")
 ]
 
-jet.write_sheet_arrow(df, "links.xlsx", hyperlinks=hyperlinks)
+jet.write_sheet_arrow(df.to_arrow(), "links.xlsx", hyperlinks=hyperlinks)
 ```
 
-## 📐 Formulas
+## 📝 Formulas
 
 ```python
 formulas = [
@@ -293,7 +924,7 @@ formulas = [
     (6, 3, "=IF(D5>50,\"High\",\"Low\")", None)
 ]
 
-jet.write_sheet_arrow(df, "formulas.xlsx", formulas=formulas)
+jet.write_sheet_arrow(df.to_arrow(), "formulas.xlsx", formulas=formulas)
 ```
 
 ## 🔀 Merge Cells
@@ -304,7 +935,7 @@ merge_cells = [
     (2, 0, 5, 0),  # Merge A2:A5
 ]
 
-jet.write_sheet_arrow(df, "merged.xlsx", merge_cells=merge_cells)
+jet.write_sheet_arrow(df.to_arrow(), "merged.xlsx", merge_cells=merge_cells)
 ```
 
 ## ✅ Data Validation
@@ -324,7 +955,7 @@ validations = [{
     "error_message": "Please select from the dropdown"
 }]
 
-jet.write_sheet_arrow(df, "validation.xlsx", data_validations=validations)
+jet.write_sheet_arrow(df.to_arrow(), "validation.xlsx", data_validations=validations)
 ```
 
 ### Number Ranges
@@ -384,10 +1015,20 @@ conditional_formats = [{
     "rule_type": "cell_value",
     "operator": "greater_than",  # less_than, equal, not_equal, etc.
     "value": "50",
-    "priority": 1
+    "priority": 1,
+    "style": {
+        "font": {
+            "bold": True,
+            "color": "FFFF0000"  # Red text
+        },
+        "fill": {
+            "pattern": "solid",
+            "fg_color": "FFFFFF00"  # Yellow background
+        }
+    }
 }]
 
-jet.write_sheet_arrow(df, "conditional.xlsx", conditional_formats=conditional_formats)
+jet.write_sheet_arrow(df.to_arrow(), "conditional.xlsx", conditional_formats=conditional_formats)
 ```
 
 **Operators:** `greater_than`, `less_than`, `equal`, `not_equal`, `greater_than_or_equal`, `less_than_or_equal`, `between`
@@ -434,7 +1075,13 @@ conditional_formats = [{
     "rule_type": "top10",
     "rank": 10,
     "bottom": False,  # Set to True for bottom 10
-    "priority": 1
+    "priority": 1,
+    "style": {
+        "font": {
+            "bold": True,
+            "color": "FF0070C0"
+        }
+    }
 }]
 ```
 
@@ -449,15 +1096,105 @@ df_costs = pl.DataFrame({"Product": ["A", "B"], "Cost": [50, 80]})
 df_profit = pl.DataFrame({"Product": ["A", "B"], "Profit": [50, 120]})
 
 sheets = [
-    (df_sales, "Sales"),
-    (df_costs, "Costs"),
-    (df_profit, "Profit")
+    {
+        "data": df_sales.to_arrow(),
+        "name": "Sales",
+        "auto_filter": True
+    },
+    {
+        "data": df_costs.to_arrow(),
+        "name": "Costs",
+        "freeze_rows": 1
+    },
+    {
+        "data": df_profit.to_arrow(),
+        "name": "Profit",
+        "styled_headers": True
+    }
 ]
 
 jet.write_sheets_arrow(
     sheets,
     "report.xlsx",
     num_threads=4  # Use 4 threads for parallel generation
+)
+```
+
+## 📋 Complete Example
+
+Here's a comprehensive example using multiple features:
+
+```python
+import polars as pl
+import jetxl as jet
+
+# Create sample data
+df = pl.DataFrame({
+    "Date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+    "Product": ["Widget A", "Widget B", "Widget C"],
+    "Quantity": [100, 150, 75],
+    "Price": [19.99, 29.99, 39.99],
+    "Revenue": [1999.0, 4498.5, 2999.25]
+})
+
+# Configure Excel table
+tables = [{
+    "name": "SalesData",
+    "display_name": "Q1 Sales",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 4,
+    "style": "TableStyleMedium9",
+    "show_row_stripes": True
+}]
+
+# Add conditional formatting
+conditional_formats = [{
+    "start_row": 2,
+    "start_col": 4,
+    "end_row": 4,
+    "end_col": 4,
+    "rule_type": "data_bar",
+    "color": "FF638EC6",
+    "show_value": True,
+    "priority": 1
+}]
+
+# Add chart
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 4,
+    "end_col": 4,
+    "from_col": 6,
+    "from_row": 1,
+    "to_col": 14,
+    "to_row": 18,
+    "title": "Revenue by Product",
+    "category_col": 1,  # Product column
+    "x_axis_title": "Product",
+    "y_axis_title": "Revenue ($)",
+    "show_legend": False
+}]
+
+# Write to Excel
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "sales_report.xlsx",
+    sheet_name="Q1 Sales",
+    styled_headers=True,
+    freeze_rows=1,
+    auto_width=True,
+    column_formats={
+        "Date": "date",
+        "Price": "currency",
+        "Revenue": "currency"
+    },
+    tables=tables,
+    conditional_formats=conditional_formats,
+    charts=charts
 )
 ```
 
@@ -483,7 +1220,7 @@ jet.write_sheets_arrow(
 
 *Benchmark environment: [System specs to be added]*
 
-## 🏗️ Architecture
+## 🗃️ Architecture
 
 Jetxl achieves its performance through several key optimizations:
 
@@ -507,7 +1244,7 @@ df = pl.scan_csv("huge_file.csv").collect()
 
 # Jetxl handles large datasets efficiently
 jet.write_sheet_arrow(
-    df,
+    df.to_arrow(),
     "large_output.xlsx",
     auto_width=False  # Disable auto-width for faster generation
 )
@@ -529,14 +1266,14 @@ def create_report_style():
     }
 
 # Apply consistent styling across reports
-jet.write_sheet_arrow(df, "report.xlsx", **create_report_style())
+jet.write_sheet_arrow(df.to_arrow(), "report.xlsx", **create_report_style())
 ```
 
 ### Error Handling
 
 ```python
 try:
-    jet.write_sheet_arrow(df, "output.xlsx")
+    jet.write_sheet_arrow(df.to_arrow(), "output.xlsx")
 except IOError as e:
     print(f"Failed to write file: {e}")
 except ValueError as e:
@@ -546,6 +1283,7 @@ except ValueError as e:
 ## 🤝 Comparison with Other Libraries
 
 ### vs openpyxl
+
 - ✅ 50-100x faster for large datasets
 - ✅ Lower memory usage
 - ✅ Native Arrow/Polars support
@@ -553,13 +1291,15 @@ except ValueError as e:
 - ❌ Fewer chart/drawing features
 
 ### vs xlsxwriter
+
 - ✅ 10-50x faster
 - ✅ Multi-threaded sheet generation
 - ✅ Zero-copy DataFrame integration
 - ✅ Modern Python API (type hints, etc.)
-- ❌ Fewer chart types
+- ❌ Fewer advanced chart customizations
 
 ### vs pandas.to_excel
+
 - ✅ 20-100x faster
 - ✅ Direct Polars support
 - ✅ More formatting options
@@ -569,20 +1309,81 @@ except ValueError as e:
 ## 📋 Supported Data Types
 
 ### Arrow/Polars Types
+
 - Numeric: `Int8/16/32/64`, `UInt8/16/32/64`, `Float32/64`
 - String: `Utf8`, `LargeUtf8`
 - Boolean: `Bool`
 - Temporal: `Date32/64`, `Timestamp` (all units), `Time32/64`
 
 ### Python Types (Dict API)
+
 - `str`, `int`, `float`, `bool`, `datetime`, `None`
 
-## 🐛 Known Limitations
+## 📚 External Resources & References
 
-- Write-only (no Excel reading support)
-- Sheet names limited to 31 characters (Excel file format limitation, not Jetxl)
-- Maximum of ~1 million rows per sheet (Excel file format limitation)
+### Official Microsoft Documentation
+
+**Excel Tables**
+- [Format an Excel Table](https://support.microsoft.com/en-us/office/format-an-excel-table-6789619f-c889-495c-99c2-2f971c0e2370) - Complete guide with visual examples of all table styles
+- [Overview of Excel Tables](https://support.microsoft.com/en-us/office/overview-of-excel-tables-7ab0bb7d-3a9e-4b56-a3c9-6c94334e492c) - Features and capabilities
+- [Using Structured References](https://support.microsoft.com/en-us/office/using-structured-references-with-excel-tables-f5ed2452-2337-4f71-bed3-c8ae6d2b276e) - Advanced table formulas
+
+**Excel Charts**
+- [Available Chart Types in Office](https://support.microsoft.com/en-us/office/available-chart-types-in-office-a6187218-807e-4103-9e0a-27cdb19afb90) - Complete reference for all chart types
+- [Create a Chart from Start to Finish](https://support.microsoft.com/en-us/office/create-a-chart-from-start-to-finish-0baf399e-dd61-4e18-8a73-b3fd5d5680c2) - Step-by-step guide
+
+**Number Formats**
+- [Available Number Formats](https://support.microsoft.com/en-us/office/available-number-formats-in-excel-0afe8f52-97db-41f1-b972-4b46e9f1e8d2) - Built-in format options
+- [Custom Number Format Guidelines](https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5) - Creating custom formats
+- [Create Custom Number Formats](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4) - Detailed tutorial
+
+### Color Resources
+
+**Understanding Excel Colors**
+- Excel uses **ARGB format** for colors: `AARRGGBB` where:
+  - `AA` = Alpha channel (transparency) - usually `FF` for fully opaque
+  - `RR` = Red component (00-FF in hexadecimal)
+  - `GG` = Green component (00-FF in hexadecimal)  
+  - `BB` = Blue component (00-FF in hexadecimal)
+
+**Example Colors**:
+```python
+"FFFF0000"  # Red (FF = opaque, FF0000 = red)
+"FF00FF00"  # Green (FF = opaque, 00FF00 = green)
+"FF0000FF"  # Blue (FF = opaque, 0000FF = blue)
+"FFFFFF00"  # Yellow (red + green)
+"FFFF00FF"  # Magenta (red + blue)
+"FF00FFFF"  # Cyan (green + blue)
+"FF000000"  # Black
+"FFFFFFFF"  # White
+```
+
+**Common Conditional Formatting Colors**:
+```python
+# Red-Yellow-Green color scale (default Excel)
+"FFF8696B"  # Red for low values
+"FFFFEB84"  # Yellow for middle values
+"FF63BE7B"  # Green for high values
+
+# Data bar colors
+"FF638EC6"  # Blue (Excel default data bar)
+"FF5687C5"  # Dark blue
+"FFFF6347"  # Tomato red
+```
+
+**Color Picker Tools**:
+- [RapidTables RGB Color Picker](https://www.rapidtables.com/web/color/RGB_Color.html) - Interactive color selection with RGB/hex codes
+- [W3Schools Color Picker](https://www.w3schools.com/colors/colors_picker.asp) - Simple online color chooser
+- [Microsoft RGB Function](https://support.microsoft.com/en-us/office/rgb-function-aa04db19-fb8a-4f58-9ad6-71a1f5a43e94) - Excel's RGB function documentation
+
+### Community Resources
+
+**Tutorials & Guides**
+- [ExcelJet Custom Number Formats](https://exceljet.net/articles/custom-number-formats) - Comprehensive formatting guide
+- [Ablebits Excel Tables Guide](https://www.ablebits.com/office-addins-blog/excel-tables-styles/) - Advanced table formatting
+- [W3Schools Excel Tutorial](https://www.w3schools.com/excel/) - Beginner-friendly Excel basics
+
+---
 
 
-
-
+Made with <3 and 🦀 by the Jetxl team

@@ -240,6 +240,7 @@ pub struct StyleConfig {
     pub conditional_formats: Vec<ConditionalFormat>,
     pub cond_format_dxf_ids: HashMap<usize, u32>,
     pub tables: Vec<ExcelTable>,
+    pub charts: Vec<ExcelChart>,
 }
 
 #[derive(Debug, Clone)]
@@ -268,6 +269,7 @@ impl Default for StyleConfig {
             conditional_formats: Vec::new(),
             cond_format_dxf_ids: HashMap::new(),
             tables: Vec::new(),
+            charts: Vec::new(),
         }
     }
 }
@@ -668,4 +670,66 @@ pub fn calculate_column_width(
     }
     
     ((max_len as f64 * 1.2) + 2.0).min(100.0)
+}
+
+#[derive(Debug, Clone)]
+pub struct ExcelChart {
+    pub chart_type: ChartType,
+    pub title: Option<String>,
+    pub data_range: (usize, usize, usize, usize), // start_row, start_col, end_row, end_col
+    pub position: ChartPosition,
+    pub series_names: Vec<String>,
+    pub category_col: Option<usize>, // Column index for category labels
+    pub show_legend: bool,
+    pub legend_position: LegendPosition,
+    pub x_axis_title: Option<String>,
+    pub y_axis_title: Option<String>, 
+}
+
+#[derive(Debug, Clone)]
+pub enum ChartType {
+    Column,
+    Bar,
+    Line,
+    Pie,
+    Scatter,
+    Area,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChartPosition {
+    pub from_col: usize,
+    pub from_row: usize,
+    pub to_col: usize,
+    pub to_row: usize,
+}
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum LegendPosition {
+    Right,
+    Left,
+    Top,
+    Bottom,
+    None,
+}
+
+impl ExcelChart {
+    pub fn new(
+        chart_type: ChartType,
+        data_range: (usize, usize, usize, usize),
+        position: ChartPosition,
+    ) -> Self {
+        Self {
+            chart_type,
+            title: None,
+            data_range,
+            position,
+            series_names: Vec::new(),
+            category_col: None,
+            show_legend: true,
+            legend_position: LegendPosition::Right,
+            x_axis_title: None,
+            y_axis_title: None,  
+        }
+    }
 }
