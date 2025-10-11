@@ -141,7 +141,7 @@ pub fn xml_escape_simd(input: &[u8], output: &mut Vec<u8>) {
         output.extend_from_slice(&input[last..]);
     }
 }
-
+#[allow(dead_code)]
 pub fn generate_content_types(sheet_names: &[&str], tables_per_sheet: &[usize]) -> String {
     let total_tables: usize = tables_per_sheet.iter().sum();
     let mut xml = String::with_capacity(800 + sheet_names.len() * 150 + total_tables * 100);
@@ -170,6 +170,63 @@ pub fn generate_content_types(sheet_names: &[&str], tables_per_sheet: &[usize]) 
             xml.push_str(&table_id.to_string());
             xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/>");
             table_id += 1;
+        }
+    }
+
+    xml.push_str("</Types>");
+    xml
+}
+
+pub fn generate_content_types_with_charts(sheet_names: &[&str], tables_per_sheet: &[usize], charts_per_sheet: &[usize]) -> String {
+    let total_tables: usize = tables_per_sheet.iter().sum();
+    let total_charts: usize = charts_per_sheet.iter().sum();
+    let mut xml = String::with_capacity(1000 + sheet_names.len() * 150 + total_tables * 100 + total_charts * 100);
+    
+    xml.push_str(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
+<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>\
+<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>\
+<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
+    );
+
+    for i in 1..=sheet_names.len() {
+        xml.push_str("<Override PartName=\"/xl/worksheets/sheet");
+        xml.push_str(&i.to_string());
+        xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+    }
+
+    // Tables
+    let mut table_id = 1;
+    for &table_count in tables_per_sheet {
+        for _ in 0..table_count {
+            xml.push_str("<Override PartName=\"/xl/tables/table");
+            xml.push_str(&table_id.to_string());
+            xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/>");
+            table_id += 1;
+        }
+    }
+    
+    // Charts
+    let mut chart_id = 1;
+    for &chart_count in charts_per_sheet {
+        for _ in 0..chart_count {
+            xml.push_str("<Override PartName=\"/xl/charts/chart");
+            xml.push_str(&chart_id.to_string());
+            xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>");
+            chart_id += 1;
+        }
+    }
+    
+    // Drawings - only for sheets with charts
+    for (i, &chart_count) in charts_per_sheet.iter().enumerate() {
+        if chart_count > 0 {
+            xml.push_str("<Override PartName=\"/xl/drawings/drawing");
+            xml.push_str(&(i + 1).to_string());
+            xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>");
         }
     }
 
@@ -488,6 +545,596 @@ fn get_large_string_array_total_bytes(arr: &arrow_array::LargeStringArray) -> us
     }
     total
 }
+
+/// Generate drawing XML for chart positioning
+pub fn generate_drawing_xml(charts: &[ExcelChart]) -> String {
+    let mut xml = String::with_capacity(2000 + charts.len() * 1000);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" ");
+    xml.push_str("xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\n");
+    
+    for (idx, chart) in charts.iter().enumerate() {
+        let chart_id = idx + 1;
+        xml.push_str("<xdr:twoCellAnchor>\n");
+        
+        // From marker
+        xml.push_str("<xdr:from>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", chart.position.from_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", chart.position.from_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:from>\n");
+        
+        // To marker
+        xml.push_str("<xdr:to>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", chart.position.to_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", chart.position.to_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:to>\n");
+        
+        // Graphic frame
+        xml.push_str("<xdr:graphicFrame macro=\"\">\n");
+        xml.push_str("<xdr:nvGraphicFramePr>\n");
+        xml.push_str(&format!("<xdr:cNvPr id=\"{}\" name=\"Chart {}\"/>\n", chart_id + 1000, chart_id));
+        xml.push_str("<xdr:cNvGraphicFramePr/>\n");
+        xml.push_str("</xdr:nvGraphicFramePr>\n");
+        xml.push_str("<xdr:xfrm>\n");
+        xml.push_str("<a:off x=\"0\" y=\"0\"/>\n");
+        xml.push_str("<a:ext cx=\"0\" cy=\"0\"/>\n");
+        xml.push_str("</xdr:xfrm>\n");
+        xml.push_str("<a:graphic>\n");
+        xml.push_str("<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\n");
+        xml.push_str(&format!("<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rIdChart{}\"/>\n", chart_id));
+        xml.push_str("</a:graphicData>\n");
+        xml.push_str("</a:graphic>\n");
+        xml.push_str("</xdr:graphicFrame>\n");
+        xml.push_str("<xdr:clientData/>\n");
+        xml.push_str("</xdr:twoCellAnchor>\n");
+    }
+    
+    xml.push_str("</xdr:wsDr>");
+    xml
+}
+
+/// Generate chart XML
+pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
+    let mut xml = String::with_capacity(5000);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" ");
+    xml.push_str("xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" ");
+    xml.push_str("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\n");
+    
+    xml.push_str("<c:lang val=\"en-US\"/>\n");
+    
+    xml.push_str("<c:chart>\n");
+    
+    // Title
+    if let Some(ref title) = chart.title {
+        xml.push_str("<c:title>\n");
+        xml.push_str("<c:tx>\n");
+        xml.push_str("<c:rich>\n");
+        xml.push_str("<a:bodyPr/>\n");
+        xml.push_str("<a:lstStyle/>\n");
+        xml.push_str("<a:p>\n");
+        xml.push_str("<a:pPr>\n");
+        xml.push_str("<a:defRPr/>\n");
+        xml.push_str("</a:pPr>\n");
+        xml.push_str("<a:r>\n");
+        xml.push_str("<a:rPr lang=\"en-US\"/>\n");
+        xml.push_str(&format!("<a:t>{}</a:t>\n", title));
+        xml.push_str("</a:r>\n");
+        xml.push_str("</a:p>\n");
+        xml.push_str("</c:rich>\n");
+        xml.push_str("</c:tx>\n");
+        xml.push_str("<c:overlay val=\"0\"/>\n");
+        xml.push_str("</c:title>\n");
+    }
+    
+    xml.push_str("<c:autoTitleDeleted val=\"0\"/>\n");
+    
+    // Plot area
+    xml.push_str("<c:plotArea>\n");
+    xml.push_str("<c:layout/>\n");
+    
+    // Chart-specific content
+    match chart.chart_type {
+        ChartType::Column => generate_column_chart_content(&mut xml, chart, sheet_name),
+        ChartType::Bar => generate_bar_chart_content(&mut xml, chart, sheet_name),
+        ChartType::Line => generate_line_chart_content(&mut xml, chart, sheet_name),
+        ChartType::Pie => generate_pie_chart_content(&mut xml, chart, sheet_name),
+        ChartType::Scatter => generate_scatter_chart_content(&mut xml, chart, sheet_name),
+        ChartType::Area => generate_area_chart_content(&mut xml, chart, sheet_name),
+    }
+    
+    xml.push_str("</c:plotArea>\n");
+    
+    // Legend
+    if chart.show_legend && !matches!(chart.legend_position, LegendPosition::None) {
+        xml.push_str("<c:legend>\n");
+        xml.push_str(&format!("<c:legendPos val=\"{}\"/>\n", match chart.legend_position {
+            LegendPosition::Right => "r",
+            LegendPosition::Left => "l",
+            LegendPosition::Top => "t",
+            LegendPosition::Bottom => "b",
+            LegendPosition::None => "r",
+        }));
+        xml.push_str("<c:overlay val=\"0\"/>\n");
+        xml.push_str("</c:legend>\n");
+    }
+    
+    xml.push_str("<c:plotVisOnly val=\"1\"/>\n");
+    xml.push_str("</c:chart>\n");
+    
+    xml.push_str("<c:printSettings>\n");
+    xml.push_str("<c:headerFooter/>\n");
+    xml.push_str("<c:pageMargins b=\"0.75\" l=\"0.7\" r=\"0.7\" t=\"0.75\" header=\"0.3\" footer=\"0.3\"/>\n");
+    xml.push_str("<c:pageSetup/>\n");
+    xml.push_str("</c:printSettings>\n");
+    
+    xml.push_str("</c:chartSpace>");
+    xml
+}
+
+fn write_axis_title(xml: &mut String, title: &str) {
+    xml.push_str("<c:title>\n");
+    xml.push_str("<c:tx>\n");
+    xml.push_str("<c:rich>\n");
+    xml.push_str("<a:bodyPr/>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p>\n");
+    xml.push_str("<a:pPr>\n");
+    xml.push_str("<a:defRPr/>\n");
+    xml.push_str("</a:pPr>\n");
+    xml.push_str("<a:r>\n");
+    xml.push_str("<a:rPr lang=\"en-US\"/>\n");
+    xml.push_str(&format!("<a:t>{}</a:t>\n", title));
+    xml.push_str("</a:r>\n");
+    xml.push_str("</a:p>\n");
+    xml.push_str("</c:rich>\n");
+    xml.push_str("</c:tx>\n");
+    xml.push_str("<c:layout/>\n");
+    xml.push_str("</c:title>\n");
+}
+
+
+fn generate_column_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:barChart>\n");
+    xml.push_str("<c:barDir val=\"col\"/>\n");
+    xml.push_str("<c:grouping val=\"clustered\"/>\n");
+    
+    let (start_row, start_col, end_row, end_col) = chart.data_range;
+    let category_col = chart.category_col.unwrap_or(start_col);
+    
+    let mut actual_series_idx = 0;
+    for col in start_col..=end_col {
+        if Some(col) == chart.category_col {
+            continue;
+        }
+        
+        let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        
+        xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
+        
+        // Series name
+        xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
+        xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
+        xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
+        
+        // Category axis data
+        xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(category_col), start_row + 1, 
+            get_column_letter(category_col), end_row + 1));
+        xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
+        
+        // Values
+        xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(col), start_row + 1, 
+            get_column_letter(col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        xml.push_str("</c:ser>\n");
+        actual_series_idx += 1;
+    }
+    
+    xml.push_str("<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"0\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("</c:barChart>\n");
+    
+    // Category axis
+    xml.push_str("<c:catAx>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    if let Some(ref x_title) = chart.x_axis_title {
+        write_axis_title(xml, x_title);
+    }
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:auto val=\"1\"/>\n");
+    xml.push_str("<c:lblAlgn val=\"ctr\"/>\n");
+    xml.push_str("<c:lblOffset val=\"100\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    // Value axis
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title);
+    }
+    xml.push_str("<c:majorGridlines/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000001\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:crossBetween val=\"between\"/>\n");
+    xml.push_str("</c:valAx>\n");
+}
+
+fn generate_bar_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:barChart>\n");
+    xml.push_str("<c:barDir val=\"bar\"/>\n");
+    xml.push_str("<c:grouping val=\"clustered\"/>\n");
+    
+    let (start_row, start_col, end_row, end_col) = chart.data_range;
+    let category_col = chart.category_col.unwrap_or(start_col);
+    
+    let mut actual_series_idx = 0;
+    for col in start_col..=end_col {
+        if Some(col) == chart.category_col {
+            continue;
+        }
+        
+        let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        
+        xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
+        
+        xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
+        xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
+        xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
+        
+        xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(category_col), start_row + 1, 
+            get_column_letter(category_col), end_row + 1));
+        xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
+        
+        xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(col), start_row + 1, 
+            get_column_letter(col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        xml.push_str("</c:ser>\n");
+        actual_series_idx += 1;
+    }
+    
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("</c:barChart>\n");
+    
+    xml.push_str("<c:catAx>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    if let Some(ref x_title) = chart.x_axis_title {
+        write_axis_title(xml, x_title);
+    }
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title);
+    }
+    xml.push_str("<c:majorGridlines/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000001\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:valAx>\n");
+}
+
+fn generate_line_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:lineChart>\n");
+    xml.push_str("<c:grouping val=\"standard\"/>\n");
+    
+    let (start_row, start_col, end_row, end_col) = chart.data_range;
+    let category_col = chart.category_col.unwrap_or(start_col);
+    
+    let mut actual_series_idx = 0;
+    for col in start_col..=end_col {
+        if Some(col) == chart.category_col {
+            continue;
+        }
+        
+        let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        
+        xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
+        
+        xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
+        xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
+        xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
+        
+        xml.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>\n");
+        
+        xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(category_col), start_row + 1, 
+            get_column_letter(category_col), end_row + 1));
+        xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
+        
+        xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(col), start_row + 1, 
+            get_column_letter(col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        xml.push_str("</c:ser>\n");
+        actual_series_idx += 1;
+    }
+    
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("</c:lineChart>\n");
+    
+    xml.push_str("<c:catAx>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    if let Some(ref x_title) = chart.x_axis_title {
+        write_axis_title(xml, x_title);
+    }
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title);
+    }
+    xml.push_str("<c:majorGridlines/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000001\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:valAx>\n");
+}
+
+fn generate_pie_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:pieChart>\n");
+    xml.push_str("<c:varyColors val=\"1\"/>\n");
+    
+    let (start_row, start_col, end_row, _end_col) = chart.data_range;
+    let category_col = chart.category_col.unwrap_or(start_col);
+    
+    // Pie charts typically show one series
+    let data_col = if start_col == category_col { start_col + 1 } else { start_col };
+    
+    xml.push_str("<c:ser>\n<c:idx val=\"0\"/>\n<c:order val=\"0\"/>\n");
+    
+    xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
+    xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        sheet_name, get_column_letter(category_col), start_row + 1, 
+        get_column_letter(category_col), end_row + 1));
+    xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
+    
+    xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
+    xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        sheet_name, get_column_letter(data_col), start_row + 1, 
+        get_column_letter(data_col), end_row + 1));
+    xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+    
+    xml.push_str("</c:ser>\n");
+    xml.push_str("<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"0\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"1\"/><c:showBubbleSize val=\"0\"/></c:dLbls>\n");
+    xml.push_str("</c:pieChart>\n");
+}
+
+fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:scatterChart>\n");
+    xml.push_str("<c:scatterStyle val=\"lineMarker\"/>\n");
+    
+    let (start_row, start_col, end_row, end_col) = chart.data_range;
+    
+    for (series_idx, col) in (start_col + 1..=end_col).enumerate() {
+        xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", series_idx, series_idx));
+        
+        xml.push_str("<c:xVal>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(start_col), start_row + 1, 
+            get_column_letter(start_col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:xVal>\n");
+        
+        xml.push_str("<c:yVal>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(col), start_row + 1, 
+            get_column_letter(col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:yVal>\n");
+        
+        xml.push_str("</c:ser>\n");
+    }
+    
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("</c:scatterChart>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    // ADD TITLE
+    if let Some(ref x_title) = chart.x_axis_title {
+        write_axis_title(xml, x_title);
+    }
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:valAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    // ADD TITLE
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title);
+    }
+    xml.push_str("<c:majorGridlines/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000001\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:valAx>\n");
+}
+
+fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
+    xml.push_str("<c:areaChart>\n");
+    xml.push_str("<c:grouping val=\"standard\"/>\n");
+    
+    let (start_row, start_col, end_row, end_col) = chart.data_range;
+    let category_col = chart.category_col.unwrap_or(start_col);
+    
+    let mut actual_series_idx = 0;
+    for col in start_col..=end_col {
+        if Some(col) == chart.category_col {
+            continue;
+        }
+        
+        let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        
+        xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
+        
+        xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
+        xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
+        xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
+        
+        xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(category_col), start_row + 1, 
+            get_column_letter(category_col), end_row + 1));
+        xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
+        
+        xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
+        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+            sheet_name, get_column_letter(col), start_row + 1, 
+            get_column_letter(col), end_row + 1));
+        xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        xml.push_str("</c:ser>\n");
+        actual_series_idx += 1;
+    }
+    
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("</c:areaChart>\n");
+    
+    xml.push_str("<c:catAx>\n");
+    xml.push_str("<c:axId val=\"100000001\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    if let Some(ref x_title) = chart.x_axis_title {
+        write_axis_title(xml, x_title);
+    }
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title);
+    }
+    xml.push_str("<c:majorGridlines/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:crossAx val=\"100000001\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("</c:valAx>\n");
+}
+
+fn get_column_letter(col: usize) -> String {
+    let mut result = String::new();
+    let mut col = col;
+    
+    while col >= 26 {
+        result.push((b'A' + (col % 26) as u8) as char);
+        col = col / 26 - 1;
+    }
+    result.push((b'A' + col as u8) as char);
+    result.chars().rev().collect()
+}
+
+/// Generate drawing relationships
+pub fn generate_drawing_rels(num_charts: usize) -> String {
+    let mut xml = String::with_capacity(300 + num_charts * 150);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+    
+    for i in 1..=num_charts {
+        xml.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", i, i));
+    }
+    
+    xml.push_str("</Relationships>");
+    xml
+}
+
 
 /// Generate complete sheet XML with all enhanced features
 /// Element order: dimension → sheetViews → sheetFormatPr → cols → sheetData → 
@@ -888,6 +1535,11 @@ pub fn generate_sheet_xml_from_arrow(
         }
         
         buf.extend_from_slice(b"</hyperlinks>");
+    }
+
+    // 11. DRAWING (for charts)
+    if !config.charts.is_empty() {
+        buf.extend_from_slice(b"<drawing r:id=\"rIdDraw1\"/>");
     }
 
     buf.extend_from_slice(b"</worksheet>");
@@ -1429,6 +2081,11 @@ pub fn generate_sheet_xml_from_dict(
         buf.extend_from_slice(&col_buf[..col_len]);
         buf.extend_from_slice(itoa::Buffer::new().format(num_rows + 1).as_bytes());
         buf.extend_from_slice(b"\"/>");
+    }
+    
+
+    if !config.charts.is_empty() {
+    buf.extend_from_slice(b"<drawing r:id=\"rIdDraw1\"/>");
     }
     
     buf.extend_from_slice(b"</worksheet>");

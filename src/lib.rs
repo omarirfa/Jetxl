@@ -16,7 +16,7 @@ use std::collections::HashMap;
 // ============================================================================
 
 #[pyfunction]
-#[pyo3(signature = (columns, filename, sheet_name = None))]
+#[pyo3(signature = (columns, filename, sheet_name = None, charts = None))]
 /// Write dict-based data to Excel (legacy API).
 ///
 /// Args:
@@ -28,11 +28,21 @@ fn write_sheet(
     columns: Bound<PyDict>,
     filename: String,
     sheet_name: Option<String>,
+    charts: Option<Vec<Bound<PyDict>>>,
 ) -> PyResult<()> {
     let sheet = extract_sheet_data(py, &columns, sheet_name)?;
 
+    let mut config = StyleConfig::default();
+    if let Some(charts_vec) = charts {
+        for chart_dict in charts_vec {
+            if let Ok(chart) = extract_chart(&chart_dict) {
+                config.charts.push(chart);
+            }
+        }
+    }
+
     py.detach(|| {
-        writer::write_single_sheet(&sheet, &filename)
+        writer::write_single_sheet_with_config(&sheet, &filename, &config)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
     })
 }
@@ -96,6 +106,7 @@ fn write_sheets(
     formulas = None,
     conditional_formats = None,
     tables = None, 
+    charts = None,
 ))]
 
 /// Write Arrow data to an Excel file with advanced formatting options.
@@ -141,6 +152,7 @@ fn write_sheet_arrow(
     formulas: Option<Vec<(usize, usize, String, Option<String>)>>,
     conditional_formats: Option<Vec<Bound<PyDict>>>,
     tables: Option<Vec<Bound<PyDict>>>,
+    charts: Option<Vec<Bound<PyDict>>>,
 ) -> PyResult<()> {
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
@@ -185,6 +197,7 @@ fn write_sheet_arrow(
         conditional_formats: Vec::new(),
         cond_format_dxf_ids: HashMap::new(), 
         tables: Vec::new(), 
+        charts: Vec::new(),
     };
 
     // Parse data validations
@@ -230,6 +243,15 @@ fn write_sheet_arrow(
         }
     }
 
+    // Charts
+    if let Some(charts_vec) = charts {
+        for chart_dict in charts_vec {
+            if let Ok(chart) = extract_chart(&chart_dict) {
+                config.charts.push(chart);
+            }
+        }
+    }
+
 //     // Build DXF IDs for conditional formats
 //     if !config.conditional_formats.is_empty() {
 //         let mut temp_registry = StyleRegistry::new();
@@ -255,41 +277,63 @@ fn write_sheet_arrow(
 ///     num_threads (int): Number of parallel threads for XML generation
 fn write_sheets_arrow(
     py: Python,
-    arrow_sheets: Vec<(Bound<PyAny>, String)>, 
+    arrow_sheets: Vec<Bound<PyDict>>,
     filename: String,
     num_threads: usize,
 ) -> PyResult<()> {
-    let sheets: Result<Vec<_>, _> = arrow_sheets
-        .into_iter()
-        .map(|(arrow_data, name)| {
-            let any_batch = AnyRecordBatch::extract_bound(&arrow_data)?;
-            let reader = any_batch.into_reader()?;
-            
-            let batches: Vec<RecordBatch> = reader
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to read Arrow data: {}", e)
-                ))?;
-            
-            if batches.is_empty() {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Arrow data is empty"
-                ));
+    // Collect sheets with owned data first
+    let mut sheets_data: Vec<(Vec<RecordBatch>, String, StyleConfig)> = Vec::new();
+    
+    for sheet_dict in arrow_sheets {
+        let arrow_data = sheet_dict.get_item("data")?.ok_or_else(|| 
+            PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'data' key"))?;
+        let name: String = sheet_dict.get_item("name")?.ok_or_else(|| 
+            PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'name' key"))?.extract()?;
+        
+        let any_batch = AnyRecordBatch::extract_bound(&arrow_data)?;
+        let reader = any_batch.into_reader()?;
+        let batches: Vec<RecordBatch> = reader
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Failed to read Arrow data: {}", e)
+            ))?;
+        
+        // Build config from optional parameters
+        let mut config = StyleConfig::default();
+        
+        if let Some(auto_filter) = sheet_dict.get_item("auto_filter")?.and_then(|v| v.extract().ok()) {
+            config.auto_filter = auto_filter;
+        }
+        if let Some(freeze_rows) = sheet_dict.get_item("freeze_rows")?.and_then(|v| v.extract().ok()) {
+            config.freeze_rows = freeze_rows;
+        }
+        if let Some(freeze_cols) = sheet_dict.get_item("freeze_cols")?.and_then(|v| v.extract().ok()) {
+            config.freeze_cols = freeze_cols;
+        }
+        if let Some(charts_vec) = sheet_dict.get_item("charts")? {
+            let charts_list = charts_vec.downcast::<pyo3::types::PyList>()?;
+            for chart_dict in charts_list.iter() {
+                if let Ok(chart_dict) = chart_dict.downcast::<PyDict>() {
+                    if let Ok(chart) = extract_chart(&chart_dict) {
+                        config.charts.push(chart);
+                    }
+                }
             }
-            
-            Ok((batches, name))
-        })
+        }
+        
+        sheets_data.push((batches, name, config));
+    }
+    
+    // Create references for the writer
+    let sheets_refs: Vec<(&[RecordBatch], &str, StyleConfig)> = sheets_data.iter()
+        .map(|(b, n, c)| (b.as_slice(), n.as_str(), c.clone()))
         .collect();
 
-    let sheets = sheets?;
-
-
     py.detach(|| {
-        writer::write_multiple_sheets_arrow(&sheets, &filename, num_threads)
+        writer::write_multiple_sheets_arrow_with_configs(&sheets_refs, &filename, num_threads)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
     })
 }
-
 // ============================================================================
 // Helper functions - Extraction from Python
 // ============================================================================
@@ -664,4 +708,44 @@ fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
     table.show_column_stripes = dict.get_item("show_column_stripes")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
     
     Ok(table)
+}
+
+fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
+    let chart_type_str: String = dict.get_item("chart_type")?.unwrap().extract()?;
+    let chart_type = match chart_type_str.as_str() {
+        "column" => ChartType::Column,
+        "bar" => ChartType::Bar,
+        "line" => ChartType::Line,
+        "pie" => ChartType::Pie,
+        "scatter" => ChartType::Scatter,
+        "area" => ChartType::Area,
+        _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid chart type")),
+    };
+    
+    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
+    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
+    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+    let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
+    let from_row: usize = dict.get_item("from_row")?.unwrap().extract()?;
+    let to_col: usize = dict.get_item("to_col")?.unwrap().extract()?;
+    let to_row: usize = dict.get_item("to_row")?.unwrap().extract()?;
+    
+    let mut chart = ExcelChart::new(
+        chart_type,
+        (start_row, start_col, end_row, end_col),
+        ChartPosition { from_col, from_row, to_col, to_row },
+    );
+    
+    chart.title = dict.get_item("title")?.and_then(|v| v.extract().ok());
+    chart.category_col = dict.get_item("category_col")?.and_then(|v| v.extract().ok());
+    chart.show_legend = dict.get_item("show_legend")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+    chart.x_axis_title = dict.get_item("x_axis_title")?.and_then(|v| v.extract().ok());
+    chart.y_axis_title = dict.get_item("y_axis_title")?.and_then(|v| v.extract().ok()); 
+    if let Some(names) = dict.get_item("series_names")?.and_then(|v| v.extract::<Vec<String>>().ok()) {
+        chart.series_names = names;
+    }
+    
+    Ok(chart)
 }

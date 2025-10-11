@@ -20,7 +20,7 @@ pub fn write_single_sheet(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet.name.as_str()];
     
-    add_static_files(&mut zipper, &sheet_names, None, &[0]);
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &[0]);
     
     let config = StyleConfig::default();
     let xml_data = xml::generate_sheet_xml_from_dict(sheet, &config)?;
@@ -29,6 +29,64 @@ pub fn write_single_sheet(
         .compression_level(CompressionLevel::fast())
         .done();
 
+    
+    write_zip_to_file(zipper, filename)
+}
+
+pub fn write_single_sheet_with_config(
+    sheet: &SheetData,
+    filename: &str,
+    config: &StyleConfig,
+) -> Result<(), WriteError> {
+    sheet.validate().map_err(WriteError::Validation)?;
+
+    let mut zipper = ZipArchive::new();
+    let sheet_names = vec![sheet.name.as_str()];
+    let charts_count = vec![config.charts.len()];
+    
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count);
+    
+    let xml_data = xml::generate_sheet_xml_from_dict(sheet, config)?;
+    zipper
+        .add_file_from_memory(xml_data, "xl/worksheets/sheet1.xml".to_string())
+        .compression_level(CompressionLevel::fast())
+        .done();
+
+    // Add chart files if any
+    if !config.charts.is_empty() {
+        let drawing_xml = xml::generate_drawing_xml(&config.charts);
+        zipper
+            .add_file_from_memory(drawing_xml.into_bytes(), "xl/drawings/drawing1.xml".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        let drawing_rels = xml::generate_drawing_rels(config.charts.len());
+        zipper
+            .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        for (idx, chart) in config.charts.iter().enumerate() {
+            let chart_xml = xml::generate_chart_xml(chart, &sheet.name);
+            zipper
+                .add_file_from_memory(
+                    chart_xml.into_bytes(),
+                    format!("xl/charts/chart{}.xml", idx + 1)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        // Add worksheet rels for drawing
+        let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        rels_xml.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
+        rels_xml.push_str("</Relationships>");
+        
+        zipper
+            .add_file_from_memory(rels_xml.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+    }
     
     write_zip_to_file(zipper, filename)
 }
@@ -69,7 +127,7 @@ pub fn write_multiple_sheets(
     let mut zipper = ZipArchive::new();
     let sheet_names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
 
-    add_static_files(&mut zipper, &sheet_names, None, &vec![0; sheets.len()]);
+    add_static_files(&mut zipper, &sheet_names, None, &vec![0; sheets.len()], &vec![0; sheets.len()]);
 
     for (idx, xml_data) in xml_sheets.into_iter().enumerate() {
         zipper
@@ -84,7 +142,7 @@ pub fn write_multiple_sheets(
 // ============================================================================
 // ARROW API - Direct Arrow → XML (Zero-Copy)
 // ============================================================================
-
+#[allow(dead_code)]
 pub fn write_single_sheet_arrow(
     batches: &[RecordBatch],
     sheet_name: &str,
@@ -132,64 +190,58 @@ pub fn write_single_sheet_arrow_with_config(
         (None, config.clone())
     };
 
-let mut zipper = ZipArchive::new();
+    let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet_name];
+    let charts_count = vec![config.charts.len()];
     
-    add_static_files(&mut zipper, &sheet_names, final_registry.as_ref(), &vec![config.tables.len()]);
-
-    // // DEBUG styles
-    // if let Some(ref reg) = final_registry {
-    //     let styles_xml = generate_styles_xml_enhanced(reg);
-    //     std::fs::write("debug_styles.xml", styles_xml.as_bytes()).ok();
-    // }
+    add_static_files(&mut zipper, &sheet_names, final_registry.as_ref(), &vec![config.tables.len()], &charts_count);
     
     let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config)?;
-    // // DEBUG
-    // std::fs::write("debug_sheet.xml", &xml_data).ok();
     zipper
         .add_file_from_memory(xml_data, "xl/worksheets/sheet1.xml".to_string())
         .compression_level(CompressionLevel::fast())
         .done();
 
-    // Add worksheet relationships if hyperlinks OR tables exist
+    // Add worksheet relationships if hyperlinks OR tables OR charts exist
     let hyperlinks_with_idx: Vec<(String, usize)> = config.hyperlinks
         .iter()
         .enumerate()
         .map(|(idx, h)| (h.url.clone(), idx + 1))
         .collect();
     
-    if !config.hyperlinks.is_empty() && config.tables.is_empty() {
-        if let Some(rels_xml) = xml::generate_worksheet_rels(&hyperlinks_with_idx) {
-            zipper
-                .add_file_from_memory(rels_xml.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
-                .compression_level(CompressionLevel::fast())
-                .done();
-        }
-    }
-
-        // ADD TABLE FILES
-    if !config.tables.is_empty() {
-        // Generate table relationship entries
-        let mut table_rels = Vec::new();
-        for idx in 0..config.tables.len() {
-            table_rels.push((
-                format!("rIdTable{}", idx + 1),
-                format!("../tables/table{}.xml", idx + 1),
-            ));
+    let has_any_rels = !config.hyperlinks.is_empty() || !config.tables.is_empty() || !config.charts.is_empty();
+    
+    if has_any_rels {
+        let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        
+        // Add hyperlinks
+        for (url, idx) in &hyperlinks_with_idx {
+            rels_xml.push_str(&format!("<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{}\" TargetMode=\"External\"/>\n", idx, url));
         }
         
-        // Create worksheet rels with both hyperlinks and tables
-        let rels_xml = xml::generate_worksheet_rels_with_tables(&hyperlinks_with_idx, &table_rels);
+        // Add tables
+        for idx in 0..config.tables.len() {
+            rels_xml.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", idx + 1, idx + 1));
+        }
+        
+        // Add drawing (for charts)
+        if !config.charts.is_empty() {
+            rels_xml.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
+        }
+        
+        rels_xml.push_str("</Relationships>");
+        
         zipper
             .add_file_from_memory(rels_xml.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
             .done();
-        
-        // Add table XML files
+    }
+    
+    // ADD TABLE FILES
+    if !config.tables.is_empty() {
         for (idx, table) in config.tables.iter().enumerate() {
             let table_id = (idx + 1) as u32;
             
-            // Extract column names from batches
             let col_names = if table.column_names.is_empty() && !batches.is_empty() {
                 let schema = batches[0].schema();
                 let (_, start_col, _, end_col) = table.range;
@@ -210,11 +262,32 @@ let mut zipper = ZipArchive::new();
                 .compression_level(CompressionLevel::fast())
                 .done();
         }
-    } else if !config.hyperlinks.is_empty() {
-        // Only hyperlinks, no tables
-        if let Some(rels_xml) = xml::generate_worksheet_rels(&hyperlinks_with_idx) {
+    }
+    
+    // ADD CHART FILES
+    if !config.charts.is_empty() {
+        // Add drawing XML
+        let drawing_xml = xml::generate_drawing_xml(&config.charts);
+        zipper
+            .add_file_from_memory(drawing_xml.into_bytes(), "xl/drawings/drawing1.xml".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        // Add drawing relationships
+        let drawing_rels = xml::generate_drawing_rels(config.charts.len());
+        zipper
+            .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        // Add chart files
+        for (idx, chart) in config.charts.iter().enumerate() {
+            let chart_xml = xml::generate_chart_xml(chart, sheet_name);
             zipper
-                .add_file_from_memory(rels_xml.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
+                .add_file_from_memory(
+                    chart_xml.into_bytes(),
+                    format!("xl/charts/chart{}.xml", idx + 1)
+                )
                 .compression_level(CompressionLevel::fast())
                 .done();
         }
@@ -337,26 +410,116 @@ pub fn write_multiple_sheets_arrow_with_configs(
     let mut zipper = ZipArchive::new();
     let sheet_names: Vec<&str> = sheets.iter().map(|(_, name, _)| *name).collect();
     let tables_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.tables.len()).collect();
+    let charts_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.charts.len()).collect();
 
-    add_static_files(&mut zipper, &sheet_names, style_registry.as_ref(), &tables_per_sheet);
+    add_static_files(&mut zipper, &sheet_names, style_registry.as_ref(), &tables_per_sheet, &charts_per_sheet);
+
+    let mut global_chart_id = 1;
+    let mut global_table_id = 1;
+    let mut drawing_id = 1;
 
     for (idx, (xml_data, hyperlinks)) in xml_and_hyperlinks.into_iter().enumerate() {
+        let sheet_config = &sheets[idx].2;
+        
         zipper
             .add_file_from_memory(xml_data, format!("xl/worksheets/sheet{}.xml", idx + 1))
             .compression_level(CompressionLevel::fast())
             .done();
 
-        // Add worksheet relationships if hyperlinks exist
-        if !hyperlinks.is_empty() {
-            if let Some(rels_xml) = xml::generate_worksheet_rels(&hyperlinks) {
+        let has_hyperlinks = !hyperlinks.is_empty();
+        let has_tables = !sheet_config.tables.is_empty();
+        let has_charts = !sheet_config.charts.is_empty();
+        
+        if has_hyperlinks || has_tables || has_charts {
+            let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+            
+            for (url, rid) in &hyperlinks {
+                rels_xml.push_str(&format!("<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{}\" TargetMode=\"External\"/>\n", rid, url));
+            }
+            
+            let sheet_start_table_id = global_table_id;
+            for i in 0..sheet_config.tables.len() {
+                rels_xml.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", 
+                    i + 1, 
+                    sheet_start_table_id + i));
+            }
+            
+            if has_charts {
+                rels_xml.push_str(&format!("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{}.xml\"/>\n", drawing_id));
+            }
+            
+            rels_xml.push_str("</Relationships>");
+            
+            zipper
+                .add_file_from_memory(
+                    rels_xml.into_bytes(),
+                    format!("xl/worksheets/_rels/sheet{}.xml.rels", idx + 1)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        if has_tables {
+            for table in &sheet_config.tables {
+                let col_names = if table.column_names.is_empty() && !sheets[idx].0.is_empty() {
+                    let schema = sheets[idx].0[0].schema();
+                    let (_, start_col, _, end_col) = table.range;
+                    schema.fields()[start_col..=end_col]
+                        .iter()
+                        .map(|f| f.name().clone())
+                        .collect()
+                } else {
+                    table.column_names.clone()
+                };
+                
+                let table_xml = xml::generate_table_xml(table, global_table_id as u32, &col_names);
                 zipper
                     .add_file_from_memory(
-                        rels_xml.into_bytes(),
-                        format!("xl/worksheets/_rels/sheet{}.xml.rels", idx + 1)
+                        table_xml.into_bytes(),
+                        format!("xl/tables/table{}.xml", global_table_id)
                     )
                     .compression_level(CompressionLevel::fast())
                     .done();
+                global_table_id += 1;
             }
+        }
+        
+        if has_charts {
+            let sheet_start_chart_id = global_chart_id;
+            
+            let drawing_xml = xml::generate_drawing_xml(&sheet_config.charts);
+            zipper
+                .add_file_from_memory(drawing_xml.into_bytes(), format!("xl/drawings/drawing{}.xml", drawing_id))
+                .compression_level(CompressionLevel::fast())
+                .done();
+            
+            let mut drawing_rels = String::with_capacity(300 + sheet_config.charts.len() * 150);
+            drawing_rels.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+            for i in 0..sheet_config.charts.len() {
+                drawing_rels.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", 
+                    i + 1, 
+                    sheet_start_chart_id + i));
+            }
+            drawing_rels.push_str("</Relationships>");
+            
+            zipper
+                .add_file_from_memory(drawing_rels.into_bytes(), format!("xl/drawings/_rels/drawing{}.xml.rels", drawing_id))
+                .compression_level(CompressionLevel::fast())
+                .done();
+            
+            for chart in &sheet_config.charts {
+                let chart_xml = xml::generate_chart_xml(chart, sheets[idx].1);
+                zipper
+                    .add_file_from_memory(
+                        chart_xml.into_bytes(),
+                        format!("xl/charts/chart{}.xml", global_chart_id)
+                    )
+                    .compression_level(CompressionLevel::fast())
+                    .done();
+                global_chart_id += 1;
+            }
+            
+            drawing_id += 1;
         }
     }
 
@@ -372,10 +535,11 @@ fn add_static_files(
     sheet_names: &[&str],
     style_registry: Option<&StyleRegistry>,
     tables_count: &[usize], // Number of tables per sheet
+    charts_count: &[usize],
 ) {
     zipper
         .add_file_from_memory(
-            xml::generate_content_types(sheet_names, tables_count).into_bytes(),
+            xml::generate_content_types_with_charts(sheet_names, tables_count, charts_count).into_bytes(),
             "[Content_Types].xml".to_string(),
         )
         .compression_level(CompressionLevel::fast())
