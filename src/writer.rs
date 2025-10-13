@@ -157,33 +157,36 @@ pub fn write_single_sheet_arrow_with_config(
     filename: &str,
     config: &StyleConfig,
 ) -> Result<(), WriteError> {
-    validate_sheet_name(sheet_name)?;
-
-    // Build style registry and update config with proper DXF IDs
-    let (final_registry, updated_config) = if !config.cell_styles.is_empty() || !config.conditional_formats.is_empty() {
-        let mut registry = StyleRegistry::new();
+    // VALIDATE SHEET NAME
+    crate::validation::validate_sheet_name(sheet_name)
+        .map_err(WriteError::Validation)?;
+    
+    // CALCULATE DATA BOUNDS
+    let schema = batches.first()
+        .ok_or_else(|| WriteError::Validation("No data to write".to_string()))?
+        .schema();
+    let num_cols = schema.fields().len();
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    
+    // PRE-VALIDATE ALL CONFIG
+    let validation_result = crate::validation::validate_style_config(
+        config, 
+        total_rows + 1, // +1 for header
+        num_cols
+    );
+    validation_result.to_error()?;
+    
+    // Build style registry with FIXED DXF IDs
+    let (final_registry, updated_config) = if !config.cell_styles.is_empty() 
+        || !config.conditional_formats.is_empty() {
         
-        for cell_style in &config.cell_styles {
-            registry.register_cell_style(&cell_style.style);
-        }
-        
-        // Build proper DXF IDs for conditional formats
-        let mut dxf_ids = HashMap::new();
-        for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-            // Only register dxf for rules that need it (cellIs, top10)
-            match &cond_format.rule {
-                ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                    registry.register_cell_style(&cond_format.style);
-                    let dxf_id = registry.register_dxf(&cond_format.style);
-                    dxf_ids.insert(idx, dxf_id);
-                }
-                // colorScale, dataBar don't use dxfId
-                _ => {}
-            }
-        }
+        let configs = vec![config];
+        let (mut registry, dxf_mappings) = crate::validation::build_global_dxf_mappings(&configs);
         
         let mut modified_config = config.clone();
-        modified_config.cond_format_dxf_ids = dxf_ids;
+        if let Some(mapping) = dxf_mappings.first() {
+            modified_config.cond_format_dxf_ids = mapping.clone();
+        }
         
         (Some(registry), modified_config)
     } else {
@@ -313,11 +316,39 @@ pub fn write_multiple_sheets_arrow_with_configs(
     filename: &str,
     num_threads: usize,
 ) -> Result<(), WriteError> {
-    // Validate sheet names
-    for (_, name, _) in sheets {
-        validate_sheet_name(name)?;
+    // VALIDATE ALL SHEET NAMES
+    let sheet_names: Vec<&str> = sheets.iter().map(|(_, name, _)| *name).collect();
+    let name_validation = crate::validation::validate_sheet_names(&sheet_names);
+    name_validation.to_error()?;
+    
+    // VALIDATE EACH SHEET'S CONFIG
+    for (idx, (batches, name, config)) in sheets.iter().enumerate() {
+        let num_cols = batches.first()
+            .ok_or_else(|| WriteError::Validation(format!("Sheet '{}': No data", name)))?
+            .schema()
+            .fields()
+            .len();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        
+        let validation_result = crate::validation::validate_style_config(
+            config,
+            total_rows + 1,
+            num_cols
+        );
+        
+        if !validation_result.is_valid() {
+            return Err(WriteError::Validation(format!(
+                "Sheet '{}' validation failed:\n{}",
+                name,
+                validation_result.errors.join("\n")
+            )));
+        }
     }
-
+    
+    // BUILD GLOBAL DXF MAPPINGS - FIXES #2 (DXF ID COLLISIONS)
+    let configs: Vec<&StyleConfig> = sheets.iter().map(|(_, _, c)| c).collect();
+    let (style_registry, sheet_dxf_mappings) = 
+        crate::validation::build_global_dxf_mappings(&configs);
     // Build combined style registry for all sheets
     let (style_registry, sheet_dxf_mappings) = {
         let mut registry = StyleRegistry::new();
@@ -602,12 +633,13 @@ fn add_static_files(
 }
 
 fn write_zip_to_file(mut zipper: ZipArchive, filename: &str) -> Result<(), WriteError> {
-    let mut file = File::create(filename)?;
-    zipper.write(&mut file)
-        .map_err(|e| WriteError::Validation(e.to_string()))?;
-    file.flush()?;
-    file.sync_all()?;
-    Ok(())
+    use crate::validation::write_file_atomic;
+    
+    write_file_atomic(filename, |file| {
+        zipper.write(file)
+            .map_err(|e| WriteError::Validation(e.to_string()))?;
+        Ok(())
+    })
 }
 
 fn validate_sheet_name(name: &str) -> Result<(), WriteError> {

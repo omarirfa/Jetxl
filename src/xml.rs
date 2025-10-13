@@ -1153,6 +1153,22 @@ pub fn generate_sheet_xml_from_arrow(
     let num_cols = schema.fields().len();
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
 
+    if total_rows + 1 > crate::validation::MAX_ROWS {
+        return Err(WriteError::Validation(format!(
+            "Data exceeds Excel's maximum of {} rows (has {})",
+            crate::validation::MAX_ROWS,
+            total_rows + 1
+        )));
+    }
+
+    if num_cols > crate::validation::MAX_COLS {
+        return Err(WriteError::Validation(format!(
+            "Data exceeds Excel's maximum of {} columns (has {})",
+            crate::validation::MAX_COLS,
+            num_cols
+        )));
+    }
+
     if num_cols == 0 {
         return Ok(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
@@ -1847,13 +1863,13 @@ fn write_arrow_cell_to_xml_optimized(
             write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
         }
         _ => {
-            buf.extend_from_slice(b"<c r=\"");
-            buf.extend_from_slice(cell_ref);
-            if let Some(sid) = style_id {
-                buf.extend_from_slice(b"\" s=\"");
-                buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
-            }
-            buf.extend_from_slice(b"\"/>");
+            return Err(WriteError::Validation(format!(
+                "Unsupported Arrow data type at row {}. \
+                Supported types: Utf8, LargeUtf8, Int8-64, UInt8-64, Float32/64, Boolean, Date32/64, Timestamp. \
+                Found: {:?}",
+                row_idx,
+                array.data_type()
+            )));
         }
     }
     

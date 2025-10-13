@@ -2,6 +2,7 @@ mod types;
 mod writer;
 mod xml;
 mod styles;
+mod validation;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
