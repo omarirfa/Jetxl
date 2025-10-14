@@ -1,6 +1,6 @@
 use crate::types::{CellValue, SheetData, WriteError};
 use crate::styles::*;
-use arrow_array::{Array, RecordBatch};
+use arrow_array::{Array, RecordBatch,Time32SecondArray, Time32MillisecondArray, Time64MicrosecondArray, Time64NanosecondArray};
 use arrow_schema::DataType;
 use chrono::Timelike;
 use std::collections::HashMap;
@@ -1142,6 +1142,7 @@ pub fn generate_drawing_rels(num_charts: usize) -> String {
 pub fn generate_sheet_xml_from_arrow(
     batches: &[RecordBatch],
     config: &StyleConfig,
+    col_format_map: &HashMap<usize, u32>,
 ) -> Result<Vec<u8>, WriteError> {
     if batches.is_empty() {
         return Ok(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
@@ -1159,14 +1160,7 @@ pub fn generate_sheet_xml_from_arrow(
 <dimension ref=\"A1\"/><sheetData/></worksheet>".to_vec());
     }
 
-    // Build style registry for custom cell styles
-    let mut style_registry = StyleRegistry::new();
-    let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
-    
-    for cell_style in &config.cell_styles {
-        let style_id = style_registry.register_cell_style(&cell_style.style);
-        cell_style_map.insert((cell_style.row, cell_style.col), style_id);
-    }
+    let cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
 
     let exact_size = calculate_exact_xml_size(batches)?;
     let mut buf = Vec::with_capacity(exact_size);
@@ -1174,7 +1168,6 @@ pub fn generate_sheet_xml_from_arrow(
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
 
-    // 1. DIMENSION (must come before sheetViews)
     buf.extend_from_slice(b"<dimension ref=\"");
     if total_rows > 0 {
         buf.extend_from_slice(b"A1:");
@@ -1189,7 +1182,6 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"\"/>");
 
-    // 2. SHEETVIEWS (always include)
     buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
         buf.push(b'>');
@@ -1215,13 +1207,10 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"/></sheetViews>");
     }
 
-    // 3. SHEETFORMATPR (default row height if specified)
     if config.row_heights.is_some() {
-        // Default row height: 15 points (standard)
         buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"15\"/>");
     }
 
-    // 4. COLS (column widths)
     if config.auto_width || config.column_widths.is_some() {
         buf.extend_from_slice(b"<cols>");
         
@@ -1252,7 +1241,6 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</cols>");
     }
 
-    // 5. SHEETDATA (the actual data)
     buf.extend_from_slice(b"<sheetData>");
 
     let col_letters: Vec<([u8; 4], usize)> = (0..num_cols)
@@ -1268,29 +1256,6 @@ pub fn generate_sheet_xml_from_arrow(
     let mut cell_int_buf = itoa::Buffer::new();
     let mut cell_ref = [0u8; 16];
 
-    // Map column formats to style IDs
-    let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
-        schema.fields().iter().enumerate()
-            .filter_map(|(idx, field)| {
-                formats.get(field.name()).map(|fmt| {
-                    let style_id = match fmt {
-                        NumberFormat::General => 0,
-                        NumberFormat::Date | NumberFormat::DateTime | NumberFormat::Time => 1,
-                        NumberFormat::Currency | NumberFormat::CurrencyRounded => 4,
-                        NumberFormat::Percentage => 5,
-                        NumberFormat::PercentageDecimal => 6,
-                        NumberFormat::Integer => 7,
-                        NumberFormat::Decimal2 | NumberFormat::Decimal4 => 8,
-                    };
-                    (idx, style_id)
-                })
-            })
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    // Build hyperlink and formula lookup maps
     let hyperlink_map: HashMap<(usize, usize), &Hyperlink> = config.hyperlinks
         .iter()
         .map(|h| ((h.row, h.col), h))
@@ -1301,7 +1266,6 @@ pub fn generate_sheet_xml_from_arrow(
         .map(|f| ((f.row, f.col), f))
         .collect();
 
-    // Header row
     let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
     buf.extend_from_slice(b"<row r=\"1\"");
     if let Some(height) = header_row_height {
@@ -1330,7 +1294,6 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"</row>");
 
-    // Data rows
     let mut current_row = 2;
     
     for batch in batches {
@@ -1345,7 +1308,6 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(row_bytes);
             buf.extend_from_slice(b"\"");
             
-            // Check for custom row height
             if let Some(heights) = &config.row_heights {
                 if let Some(height) = heights.get(&row_num) {
                     buf.extend_from_slice(b" ht=\"");
@@ -1367,7 +1329,6 @@ pub fn generate_sheet_xml_from_arrow(
                 };
                 let cell_ref_slice = &cell_ref[..cell_ref_len];
 
-                // Check for custom cell style, formula, or hyperlink
                 let custom_style_id = cell_style_map.get(&(row_num, col_idx)).copied();
                 let default_style_id = col_format_map.get(&col_idx).copied();
                 let style_id = custom_style_id.or(default_style_id);
@@ -1395,8 +1356,6 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
-
-    // TABLE PARTS (must come after sheetData, before autoFilter)
     if !config.tables.is_empty() {
         buf.extend_from_slice(b"<tableParts count=\"");
         buf.extend_from_slice(itoa::Buffer::new().format(config.tables.len()).as_bytes());
@@ -1410,7 +1369,7 @@ pub fn generate_sheet_xml_from_arrow(
         
         buf.extend_from_slice(b"</tableParts>");
     }
-    // 6. AUTOFILTER
+
     if config.auto_filter && total_rows > 0 {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
         let mut col_buf = [0u8; 4];
@@ -1420,7 +1379,6 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"\"/>");
     }
 
-    // 7. MERGED CELLS
     if !config.merge_cells.is_empty() {
         buf.extend_from_slice(b"<mergeCells count=\"");
         buf.extend_from_slice(itoa::Buffer::new().format(config.merge_cells.len()).as_bytes());
@@ -1436,12 +1394,11 @@ pub fn generate_sheet_xml_from_arrow(
         
         buf.extend_from_slice(b"</mergeCells>");
     }
-     // 8. CONDITIONAL FORMATTING
+
     if !config.conditional_formats.is_empty() {
         write_conditional_formatting(&mut buf, &config.conditional_formats, config);
     }
 
-    // 9. DATA VALIDATIONS
     if !config.data_validations.is_empty() {
         buf.extend_from_slice(b"<dataValidations count=\"");
         buf.extend_from_slice(itoa::Buffer::new().format(config.data_validations.len()).as_bytes());
@@ -1522,7 +1479,6 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</dataValidations>");
     }
 
-    // 10. HYPERLINKS
     if !config.hyperlinks.is_empty() {
         buf.extend_from_slice(b"<hyperlinks>");
         
@@ -1537,7 +1493,6 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</hyperlinks>");
     }
 
-    // 11. DRAWING (for charts)
     if !config.charts.is_empty() {
         buf.extend_from_slice(b"<drawing r:id=\"rIdDraw1\"/>");
     }
@@ -1654,7 +1609,6 @@ fn write_arrow_cell_to_xml_optimized(
 ) -> Result<(), WriteError> {
     use arrow_array::*;
     
-    // Handle formulas - formula takes precedence
     if let Some(f) = formula {
         buf.extend_from_slice(b"<c r=\"");
         buf.extend_from_slice(cell_ref);
@@ -1666,7 +1620,6 @@ fn write_arrow_cell_to_xml_optimized(
         xml_escape_simd(f.formula.as_bytes(), buf);
         buf.extend_from_slice(b"</f>");
         
-        // Add cached value if provided
         if let Some(ref cached) = f.cached_value {
             buf.extend_from_slice(b"<v>");
             xml_escape_simd(cached.as_bytes(), buf);
@@ -1677,7 +1630,6 @@ fn write_arrow_cell_to_xml_optimized(
         return Ok(());
     }
     
-    // Handle hyperlinks - display text instead of cell value
     if let Some(hl) = hyperlink {
         let display_text = hl.display.as_ref().map(|s| s.as_str()).unwrap_or(&hl.url);
         
@@ -1689,7 +1641,6 @@ fn write_arrow_cell_to_xml_optimized(
         return Ok(());
     }
     
-    // Handle null cells
     if array.is_null(row_idx) {
         buf.extend_from_slice(b"<c r=\"");
         buf.extend_from_slice(cell_ref);
@@ -1701,7 +1652,6 @@ fn write_arrow_cell_to_xml_optimized(
         return Ok(());
     }
 
-    // Handle regular cell values by type
     match array.data_type() {
         DataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
@@ -1809,6 +1759,38 @@ fn write_arrow_cell_to_xml_optimized(
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
             write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
+        }
+       DataType::Time32(unit) => {
+            use arrow_schema::TimeUnit;
+            let seconds = match unit {
+                TimeUnit::Second => {
+                    let arr = array.as_any().downcast_ref::<Time32SecondArray>().unwrap();
+                    arr.value(row_idx) as f64
+                }
+                TimeUnit::Millisecond => {
+                    let arr = array.as_any().downcast_ref::<Time32MillisecondArray>().unwrap();
+                    arr.value(row_idx) as f64 / 1000.0
+                }
+                _ => 0.0,
+            };
+            // let time_fraction = seconds / 86400.0;
+            // write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
+        }
+        DataType::Time64(unit) => {
+            use arrow_schema::TimeUnit;
+            let seconds = match unit {
+                TimeUnit::Microsecond => {
+                    let arr = array.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap();
+                    arr.value(row_idx) as f64 / 1_000_000.0
+                }
+                TimeUnit::Nanosecond => {
+                    let arr = array.as_any().downcast_ref::<Time64NanosecondArray>().unwrap();
+                    arr.value(row_idx) as f64 / 1_000_000_000.0
+                }
+                _ => 0.0,
+            };
+            let time_fraction = seconds / 86400.0;
+            write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
         }
         DataType::Timestamp(unit, _) => {
             use arrow_schema::TimeUnit;

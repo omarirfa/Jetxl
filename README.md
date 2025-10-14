@@ -195,31 +195,236 @@ jet.write_sheet_arrow(
 
 ### Column Formats
 
+Jetxl supports both built-in format shortcuts and custom Excel format codes for complete control over number display.
+
+#### Built-in Format Shortcuts
+
 ```python
 jet.write_sheet_arrow(
     df.to_arrow(),
     "formatted.xlsx",
     column_formats={
-        "Price": "currency",           # $1.50
-        "Quantity": "integer",         # 100
-        "Growth": "percentage",        # 15%
-        "Timestamp": "datetime"        # 2024-01-01 12:00:00
+        "Price": "currency",           # $#,##0.00
+        "Quantity": "integer",         # 0
+        "Growth": "percentage",        # 0%
+        "Timestamp": "datetime",       # yyyy-mm-dd hh:mm:ss
+        "Score": "decimal2",           # 0.00
+        "Rate": "scientific",          # 0.00E+00
+        "Measurement": "fraction"      # # ?/?
     }
 )
 ```
 
-**Available formats:**
+**Available built-in formats:**
 - `general` - Default formatting
 - `integer` - Whole numbers (0)
 - `decimal2` - Two decimal places (0.00)
 - `decimal4` - Four decimal places (0.0000)
 - `percentage` - Percentage (0%)
 - `percentage_decimal` - Percentage with decimal (0.00%)
+- `percentage_integer` - Percentage as integer (0%)
 - `currency` - Currency ($#,##0.00)
 - `currency_rounded` - Rounded currency ($#,##0)
 - `date` - Date (yyyy-mm-dd)
 - `datetime` - Date and time (yyyy-mm-dd hh:mm:ss)
 - `time` - Time (hh:mm:ss)
+- `scientific` - Scientific notation (0.00E+00)
+- `fraction` - Fraction (# ?/?)
+- `fraction_two_digits` - Fraction with 2 digits (# ??/??)
+- `thousands` - Thousands separator (#,##0)
+
+#### Custom Format Codes
+
+Any string not matching a built-in format becomes a custom Excel format code, giving you full control:
+
+```python
+column_formats = {
+    # Accounting format with negative in parentheses
+    "Amount": "$#,##0.00_);[Red]($#,##0.00)",
+    
+    # Thousands with 'K' suffix
+    "Visitors": "#,##0,\"K\"",
+    
+    # Millions with 'M' suffix  
+    "Revenue": "$#,##0.0,,\"M\"",
+    
+    # Custom date format
+    "Date": "dddd, mmmm dd, yyyy",
+    
+    # Conditional coloring
+    "Change": "[Green]#,##0;[Red]-#,##0;[Blue]0",
+    
+    # Fractions in sixteenths
+    "Measurement": "# ?/16",
+    
+    # Phone numbers
+    "Phone": "(###) ###-####",
+    
+    # Zero-padded IDs
+    "ID": "00000",
+    
+    # Hide zeros
+    "Optional": "#,##0;-#,##0;\"\""
+}
+```
+
+#### Custom Format Syntax
+
+Excel format codes use this structure:
+```
+[Positive];[Negative];[Zero];[Text]
+```
+
+**Format symbols:**
+- `0` - Digit placeholder (shows 0 if no digit)
+- `#` - Digit placeholder (shows nothing if no digit)  
+- `?` - Digit placeholder (adds space for alignment)
+- `.` - Decimal point
+- `,` - Thousands separator (or divider in millions/thousands)
+- `%` - Multiply by 100 and show percent sign
+- `E+` `E-` - Scientific notation
+- `"text"` - Literal text in quotes
+- `@` - Text placeholder
+- `[Color]` - Color code (Red, Blue, Green, etc.)
+- `[>=100]` - Conditional formatting
+
+**Scaling numbers:**
+- One comma `,` after number divides by 1,000
+- Two commas `,,` divide by 1,000,000
+- Example: `#,##0,` shows 1500 as "2" (rounded thousands)
+- Example: `#,##0.0,,` shows 5000000 as "5.0" (millions)
+
+#### Complete Custom Format Examples
+
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Revenue": [1500000, 500000, 75000],
+    "Change": [150, -75, 0],
+    "Ratio": [0.333, 0.125, 0.875],
+    "Code": [1, 42, 999],
+    "Date": ["2024-01-15", "2024-02-20", "2024-03-25"]
+})
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "custom_formats.xlsx",
+    column_formats={
+        # Show millions with conditional formatting
+        "Revenue": "[>=1000000]$#,##0.0,,\"M\";[>=1000]$#,##0,\"K\";$#,##0",
+        
+        # Color-coded changes with +/- indicators
+        "Change": "[Green]+#,##0;[Red]-#,##0;[Blue]0",
+        
+        # Fractions with fallback
+        "Ratio": "# ?/?;-# ?/?;\"N/A\"",
+        
+        # Zero-padded codes
+        "Code": "000000",
+        
+        # Custom date format
+        "Date": "dddd, mmmm dd, yyyy"
+    }
+)
+```
+
+#### Testing Custom Formats
+
+The easiest way to create custom formats:
+
+1. Open Excel and format a cell manually
+2. Right-click → Format Cells → Custom
+3. Copy the format code from the "Type:" field
+4. Use that exact string in Jetxl
+
+#### Limitations
+
+- **No validation**: Custom format codes aren't validated client-side. Invalid codes may cause Excel errors when opening the file.
+- **XML escaping**: Special characters (`<`, `>`, `&`, `"`, `'`) are automatically escaped - you don't need to worry about them.
+- **Length limit**: Format codes are limited to ~255 characters (Excel limitation).
+- **Compatibility**: Some advanced features (locale codes, DBNum) may not work in all Excel versions.
+- **Color names**: Limited to Excel's built-in set: `[Red]`, `[Blue]`, `[Green]`, `[Yellow]`, `[Cyan]`, `[Magenta]`, `[White]`, `[Black]`, `[Color1]`-`[Color56]`.
+
+**Reference**: [Excel Number Format Codes - Microsoft](https://support.microsoft.com/en-us/office/number-format-codes-5026bbd6-04bc-48cd-bf33-80f18b4eae68)
+
+### Advanced Number Format Examples
+
+#### Dynamic Scaling
+
+Automatically scale numbers based on magnitude:
+
+```python
+# Show millions, thousands, or regular numbers
+column_formats = {
+    "Value": "[>=1000000]#,##0.0,,\"M\";[>=1000]#,##0.0,\"K\";#,##0"
+}
+# 5000000 → "5.0M"
+# 15000 → "15.0K"  
+# 500 → "500"
+```
+
+#### Conditional Text
+
+Display custom text based on values:
+
+```python
+column_formats = {
+    "Status": "[=1]\"✓ Complete\";[=0]\"✗ Pending\";\"Unknown\"",
+    "Grade": "[>=90]\"A\";[>=80]\"B\";[>=70]\"C\";\"F\""
+}
+```
+
+#### Accounting Formats
+
+Professional financial formatting:
+
+```python
+column_formats = {
+    # Negative in parentheses, aligned decimals
+    "P&L": "_($* #,##0.00_);_($* (#,##0.00);_($* \"-\"??_);_(@_)",
+    
+    # Simple accounting with red negatives
+    "Balance": "$#,##0.00_);[Red]($#,##0.00)"
+}
+```
+
+#### Custom Date/Time Formats
+
+```python
+column_formats = {
+    "FullDate": "dddd, mmmm dd, yyyy",        # Monday, January 15, 2024
+    "ShortDate": "mm/dd/yy",                  # 01/15/24
+    "MonthYear": "mmmm yyyy",                 # January 2024
+    "Quarter": "\"Q\"Q yyyy",                 # Q1 2024
+    "TimeOnly": "h:mm AM/PM",                 # 3:45 PM
+    "Timestamp": "yyyy-mm-dd hh:mm:ss"       # 2024-01-15 15:45:30
+}
+```
+
+#### Fractions and Measurements
+
+```python
+column_formats = {
+    "Inches": "# ?/16\"",           # Fractions in sixteenths with inch mark
+    "Simple": "# ?/?",              # Simplest fraction
+    "Eighths": "# ?/8",             # Fractions in eighths
+    "Mixed": "# ??/??",             # Up to two-digit fractions
+    "Feet": "#' ?/16\"",            # 5' 3/16"
+}
+```
+
+#### Percentage Variations
+
+```python
+column_formats = {
+    "Basic": "0%",                  # 15%
+    "OneDecimal": "0.0%",           # 15.7%
+    "TwoDecimal": "0.00%",          # 15.73%
+    "WithSign": "+0.0%;-0.0%;0%",   # +15.7%, -3.2%, 0%
+}
+```
 
 ### Column Widths & Row Heights
 
@@ -915,7 +1120,7 @@ hyperlinks = [
 jet.write_sheet_arrow(df.to_arrow(), "links.xlsx", hyperlinks=hyperlinks)
 ```
 
-## 📝 Formulas
+## 🔢 Formulas
 
 ```python
 formulas = [
@@ -1333,6 +1538,7 @@ except ValueError as e:
 - [Create a Chart from Start to Finish](https://support.microsoft.com/en-us/office/create-a-chart-from-start-to-finish-0baf399e-dd61-4e18-8a73-b3fd5d5680c2) - Step-by-step guide
 
 **Number Formats**
+- [Excel Number Format Codes](https://support.microsoft.com/en-us/office/number-format-codes-5026bbd6-04bc-48cd-bf33-80f18b4eae68) - Complete reference for custom format codes
 - [Available Number Formats](https://support.microsoft.com/en-us/office/available-number-formats-in-excel-0afe8f52-97db-41f1-b972-4b46e9f1e8d2) - Built-in format options
 - [Custom Number Format Guidelines](https://support.microsoft.com/en-us/office/review-guidelines-for-customizing-a-number-format-c0a1d1fa-d3f4-4018-96b7-9c9354dd99f5) - Creating custom formats
 - [Create Custom Number Formats](https://support.microsoft.com/en-us/office/create-a-custom-number-format-78f2a361-936b-4c03-8772-09fab54be7f4) - Detailed tutorial

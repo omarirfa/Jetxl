@@ -310,6 +310,23 @@ fn write_sheets_arrow(
         if let Some(freeze_cols) = sheet_dict.get_item("freeze_cols")?.and_then(|v| v.extract().ok()) {
             config.freeze_cols = freeze_cols;
         }
+
+        // Extract column_formats
+        if let Some(formats) = sheet_dict.get_item("column_formats")? {
+            let formats_dict = formats.downcast::<PyDict>()?;
+            let mut col_fmts = HashMap::new();
+            for (key, value) in formats_dict.iter() {
+                let col_name: String = key.extract()?;
+                let fmt_str: String = value.extract()?;
+                if let Some(fmt) = parse_number_format(&fmt_str) {
+                    col_fmts.insert(col_name, fmt);
+                }
+            }
+            config.column_formats = Some(col_fmts);
+        }
+
+
+
         if let Some(charts_vec) = sheet_dict.get_item("charts")? {
             let charts_list = charts_vec.downcast::<pyo3::types::PyList>()?;
             for chart_dict in charts_list.iter() {
@@ -382,15 +399,26 @@ fn parse_number_format(s: &str) -> Option<NumberFormat> {
         "decimal4" => Some(NumberFormat::Decimal4),
         "percentage" => Some(NumberFormat::Percentage),
         "percentage_decimal" => Some(NumberFormat::PercentageDecimal),
+        "percentage_integer" => Some(NumberFormat::PercentageInteger),
         "currency" => Some(NumberFormat::Currency),
         "currency_rounded" => Some(NumberFormat::CurrencyRounded),
         "date" => Some(NumberFormat::Date),
         "datetime" => Some(NumberFormat::DateTime),
         "time" => Some(NumberFormat::Time),
-        _ => None,
+        "scientific" => Some(NumberFormat::Scientific),
+        "fraction" => Some(NumberFormat::Fraction),
+        "fraction_two_digits" => Some(NumberFormat::FractionTwoDigits),
+        "thousands" => Some(NumberFormat::ThousandsSeparator),
+        _ => {
+            // Treat unknown strings as custom format codes
+            if s.is_empty() {
+                None
+            } else {
+                Some(NumberFormat::Custom(s.to_string()))
+            }
+        }
     }
 }
-
 fn extract_data_validation(dict: &Bound<PyDict>) -> PyResult<DataValidation> {
     let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
     let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
