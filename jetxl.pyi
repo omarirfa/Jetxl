@@ -50,12 +50,137 @@ NumberFormat = Literal[
     "decimal4",             # Four decimal places: 0.0000
     "percentage",           # Percentage: 0%
     "percentage_decimal",   # Percentage with decimal: 0.00%
+    "percentage_integer",   # Percentage integer: 0%
     "currency",             # Currency: $#,##0.00
     "currency_rounded",     # Rounded currency: $#,##0
     "date",                 # Date: yyyy-mm-dd
     "datetime",             # Date and time: yyyy-mm-dd hh:mm:ss
     "time",                 # Time: hh:mm:ss
-]
+    "scientific",           # Scientific notation: 0.00E+00
+    "fraction",             # Fraction: # ?/?
+    "fraction_two_digits",  # Fraction with 2 digits: # ??/??
+    "thousands",            # Thousands separator: #,##0
+] | str                     # Any string not matching above becomes a custom Excel format code
+
+"""
+Custom Number Formats
+=====================
+
+Any string not matching a built-in format is treated as a custom Excel number format code.
+This allows full control over number display using Excel's format code syntax.
+
+Excel Format Code Syntax:
+    [Positive];[Negative];[Zero];[Text]
+    
+    You can specify 1-4 sections separated by semicolons:
+    - 1 section: applies to all numbers
+    - 2 sections: first for positive/zero, second for negative
+    - 3 sections: positive, negative, zero
+    - 4 sections: positive, negative, zero, text
+
+Format Code Symbols:
+    0       Digit placeholder (shows 0 if no digit)
+    #       Digit placeholder (shows nothing if no digit)
+    ?       Digit placeholder (adds space for alignment)
+    .       Decimal point
+    ,       Thousands separator
+    %       Multiply by 100 and show percent sign
+    E+ E-   Scientific notation
+    $       Dollar sign (literal)
+    -+()    Math symbols (literal)
+    "text"  Literal text in quotes
+    @       Text placeholder
+    *       Repeat next character to fill cell width
+    _       Skip width of next character
+    [Color] Color code (e.g., [Red], [Blue], [Green])
+    [>=100] Conditional format
+
+Common Custom Format Examples:
+
+Accounting format with negative in parentheses:
+    >>> column_formats = {"Amount": "#,##0.00_);(#,##0.00)"}
+
+Show thousands with 'K' suffix:
+    >>> column_formats = {"Value": "#,##0,\"K\""}
+    # 1500 displays as "1K"
+
+Display millions:
+    >>> column_formats = {"Revenue": "$#,##0.0,,\"M\""}
+    # 5000000 displays as "$5.0M"
+
+Custom date/time:
+    >>> column_formats = {"Date": "dddd, mmmm dd, yyyy"}
+    # Displays as "Monday, January 15, 2024"
+
+Conditional coloring:
+    >>> column_formats = {"Change": "[Green]#,##0;[Red]-#,##0;[Blue]0"}
+    # Green for positive, red for negative, blue for zero
+
+Fraction with specific denominator:
+    >>> column_formats = {"Measurement": "# ?/16"}
+    # Shows fractions in 16ths
+
+Phone numbers:
+    >>> column_formats = {"Phone": "(###) ###-####"}
+
+Pad with zeros:
+    >>> column_formats = {"ID": "00000"}
+    # 42 displays as "00042"
+
+Show positive/negative indicators:
+    >>> column_formats = {"Delta": "+#,##0;-#,##0;0"}
+
+Hide zeros:
+    >>> column_formats = {"Value": "#,##0;-#,##0;\"\""}
+
+Limitations and Safeguards:
+    - Custom formats MUST be valid Excel format codes
+    - No client-side validation - invalid codes may cause Excel errors
+    - Special XML characters (<, >, &, ", ') are automatically escaped
+    - Maximum format code length: ~255 characters (Excel limitation)
+    - Some complex features (e.g., [DBNum1], locale codes) may not work in all Excel versions
+    - Color names are limited to Excel's built-in set: [Red], [Blue], [Green], [Yellow], 
+      [Cyan], [Magenta], [White], [Black], [Color1]-[Color56]
+
+Examples in Code:
+
+Basic Usage:
+    >>> import jetxl
+    >>> import polars as pl
+    >>> 
+    >>> df = pl.DataFrame({
+    ...     "Amount": [1234.56, -789.12, 0],
+    ...     "Percentage": [0.157, 0.932, 0.005],
+    ...     "Code": [1, 42, 999]
+    ... })
+    >>> 
+    >>> jetxl.write_sheet_arrow(
+    ...     df.to_arrow(),
+    ...     "custom_formats.xlsx",
+    ...     column_formats={
+    ...         "Amount": "$#,##0.00_);[Red]($#,##0.00)",  # Accounting format
+    ...         "Percentage": "0.0%",                       # One decimal percent
+    ...         "Code": "000000"                            # Zero-padded
+    ...     }
+    ... )
+
+Advanced Custom Formats:
+    >>> column_formats = {
+    ...     "Revenue": "[>=1000000]$#,##0.0,,\"M\";[>=1000]$#,##0,\"K\";$#,##0",
+    ...     "Quarter": "\"Q\"0",                           # Q1, Q2, Q3, Q4
+    ...     "Ratio": "# ?/?;-# ?/?;\"N/A\"",              # Fractions with N/A for zero
+    ...     "Status": "[=1]\"Active\";[=0]\"Inactive\";@", # Text based on value
+    ... }
+
+Testing Custom Formats:
+    The easiest way to test custom formats is to:
+    1. Create the format in Excel manually
+    2. Right-click the cell → Format Cells → Custom
+    3. Copy the format code from the "Type:" field
+    4. Use that exact string in Jetxl
+
+Reference: https://support.microsoft.com/en-us/office/number-format-codes-5026bbd6-04bc-48cd-bf33-80f18b4eae68
+"""
 
 # =============================================================================
 # FONT STYLING

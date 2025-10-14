@@ -1,5 +1,5 @@
 use crate::types::{SheetData, WriteError};
-use crate::styles::{StyleConfig, generate_styles_xml, generate_styles_xml_enhanced, StyleRegistry, ConditionalRule};
+use crate::styles::{StyleConfig, generate_styles_xml, generate_styles_xml_enhanced, StyleRegistry, ConditionalRule, CellStyle};
 use crate::xml;
 use mtzip::{level::CompressionLevel, ZipArchive};
 use std::fs::File;
@@ -159,50 +159,61 @@ pub fn write_single_sheet_arrow_with_config(
 ) -> Result<(), WriteError> {
     validate_sheet_name(sheet_name)?;
 
-    // Build style registry and update config with proper DXF IDs
-    let (final_registry, updated_config) = if !config.cell_styles.is_empty() || !config.conditional_formats.is_empty() {
-        let mut registry = StyleRegistry::new();
-        
-        for cell_style in &config.cell_styles {
-            registry.register_cell_style(&cell_style.style);
-        }
-        
-        // Build proper DXF IDs for conditional formats
+    let mut registry = StyleRegistry::new();
+    let mut updated_config = config.clone();
+
+    let schema = batches[0].schema();
+    let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
+        schema.fields().iter().enumerate()
+            .filter_map(|(idx, field)| {
+                formats.get(field.name()).map(|fmt| {
+                    let cell_style = CellStyle {
+                        font: None,
+                        fill: None,
+                        border: None,
+                        alignment: None,
+                        number_format: Some(fmt.clone()),
+                    };
+                    let style_id = registry.register_cell_style(&cell_style);
+                    (idx, style_id)
+                })
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    for cell_style in &config.cell_styles {
+        registry.register_cell_style(&cell_style.style);
+    }
+
+    if !config.conditional_formats.is_empty() {
         let mut dxf_ids = HashMap::new();
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-            // Only register dxf for rules that need it (cellIs, top10)
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
                     registry.register_cell_style(&cond_format.style);
                     let dxf_id = registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
-                // colorScale, dataBar don't use dxfId
                 _ => {}
             }
         }
-        
-        let mut modified_config = config.clone();
-        modified_config.cond_format_dxf_ids = dxf_ids;
-        
-        (Some(registry), modified_config)
-    } else {
-        (None, config.clone())
-    };
+        updated_config.cond_format_dxf_ids = dxf_ids;
+    }
 
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet_name];
     let charts_count = vec![config.charts.len()];
     
-    add_static_files(&mut zipper, &sheet_names, final_registry.as_ref(), &vec![config.tables.len()], &charts_count);
+    add_static_files(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count);
     
-    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config)?;
+    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map)?;
     zipper
         .add_file_from_memory(xml_data, "xl/worksheets/sheet1.xml".to_string())
         .compression_level(CompressionLevel::fast())
         .done();
 
-    // Add worksheet relationships if hyperlinks OR tables OR charts exist
     let hyperlinks_with_idx: Vec<(String, usize)> = config.hyperlinks
         .iter()
         .enumerate()
@@ -214,17 +225,14 @@ pub fn write_single_sheet_arrow_with_config(
     if has_any_rels {
         let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
         
-        // Add hyperlinks
         for (url, idx) in &hyperlinks_with_idx {
             rels_xml.push_str(&format!("<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{}\" TargetMode=\"External\"/>\n", idx, url));
         }
         
-        // Add tables
         for idx in 0..config.tables.len() {
             rels_xml.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", idx + 1, idx + 1));
         }
         
-        // Add drawing (for charts)
         if !config.charts.is_empty() {
             rels_xml.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
         }
@@ -237,7 +245,6 @@ pub fn write_single_sheet_arrow_with_config(
             .done();
     }
     
-    // ADD TABLE FILES
     if !config.tables.is_empty() {
         for (idx, table) in config.tables.iter().enumerate() {
             let table_id = (idx + 1) as u32;
@@ -264,23 +271,19 @@ pub fn write_single_sheet_arrow_with_config(
         }
     }
     
-    // ADD CHART FILES
     if !config.charts.is_empty() {
-        // Add drawing XML
         let drawing_xml = xml::generate_drawing_xml(&config.charts);
         zipper
             .add_file_from_memory(drawing_xml.into_bytes(), "xl/drawings/drawing1.xml".to_string())
             .compression_level(CompressionLevel::fast())
             .done();
         
-        // Add drawing relationships
         let drawing_rels = xml::generate_drawing_rels(config.charts.len());
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
             .done();
         
-        // Add chart files
         for (idx, chart) in config.charts.iter().enumerate() {
             let chart_xml = xml::generate_chart_xml(chart, sheet_name);
             zipper
@@ -313,50 +316,55 @@ pub fn write_multiple_sheets_arrow_with_configs(
     filename: &str,
     num_threads: usize,
 ) -> Result<(), WriteError> {
-    // Validate sheet names
     for (_, name, _) in sheets {
         validate_sheet_name(name)?;
     }
 
-    // Build combined style registry for all sheets
-    let (style_registry, sheet_dxf_mappings) = {
-        let mut registry = StyleRegistry::new();
-        let mut has_custom_styles = false;
-        let mut all_dxf_mappings = Vec::new();
-        
-        for (_, _, config) in sheets {
-            let mut dxf_ids = HashMap::new();
-            
-            if !config.cell_styles.is_empty() || !config.conditional_formats.is_empty() {
-                has_custom_styles = true;
-                
-                for cell_style in &config.cell_styles {
-                    registry.register_cell_style(&cell_style.style);
-                }
-                
-                for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-                    match &cond_format.rule {
-                        ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                            registry.register_cell_style(&cond_format.style);
-                            let dxf_id = registry.register_dxf(&cond_format.style);
-                            dxf_ids.insert(idx, dxf_id);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            
-            all_dxf_mappings.push(dxf_ids);
-        }
-        
-        if has_custom_styles {
-            (Some(registry), all_dxf_mappings)
-        } else {
-            (None, Vec::new())
-        }
-    };
+    let mut style_registry = StyleRegistry::new();
+    let mut sheet_col_format_maps = Vec::new();
+    let mut sheet_dxf_mappings = Vec::new();
 
-    // Generate XMLs in parallel if num_threads > 1 and multiple sheets
+    for (batches, _, config) in sheets {
+        let schema = batches[0].schema();
+        let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
+            schema.fields().iter().enumerate()
+                .filter_map(|(idx, field)| {
+                    formats.get(field.name()).map(|fmt| {
+                        let cell_style = CellStyle {
+                            font: None,
+                            fill: None,
+                            border: None,
+                            alignment: None,
+                            number_format: Some(fmt.clone()),
+                        };
+                        let style_id = style_registry.register_cell_style(&cell_style);
+                        (idx, style_id)
+                    })
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        sheet_col_format_maps.push(col_format_map);
+
+        for cell_style in &config.cell_styles {
+            style_registry.register_cell_style(&cell_style.style);
+        }
+
+        let mut dxf_ids = HashMap::new();
+        for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
+            match &cond_format.rule {
+                ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
+                    style_registry.register_cell_style(&cond_format.style);
+                    let dxf_id = style_registry.register_dxf(&cond_format.style);
+                    dxf_ids.insert(idx, dxf_id);
+                }
+                _ => {}
+            }
+        }
+        sheet_dxf_mappings.push(dxf_ids);
+    }
+
     let xml_and_hyperlinks: Vec<(Vec<u8>, Vec<(String, usize)>)> = 
         if num_threads > 1 && sheets.len() > 1 {
             let pool = rayon::ThreadPoolBuilder::new()
@@ -374,7 +382,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
                             modified_config.cond_format_dxf_ids = sheet_dxf_mappings[sheet_idx].clone();
                         }
                         
-                        let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config)?;
+                        let col_format_map = &sheet_col_format_maps[sheet_idx];
+                        let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map)?;
                         let hyperlinks: Vec<(String, usize)> = modified_config.hyperlinks
                             .iter()
                             .enumerate()
@@ -385,7 +394,6 @@ pub fn write_multiple_sheets_arrow_with_configs(
                     .collect::<Result<Vec<_>, WriteError>>()
             })?
         } else {
-            // Sequential fallback
             sheets
                 .iter()
                 .enumerate()
@@ -395,7 +403,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
                         modified_config.cond_format_dxf_ids = sheet_dxf_mappings[sheet_idx].clone();
                     }
                     
-                    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config)?;
+                    let col_format_map = &sheet_col_format_maps[sheet_idx];
+                    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map)?;
                     let hyperlinks: Vec<(String, usize)> = modified_config.hyperlinks
                         .iter()
                         .enumerate()
@@ -406,13 +415,12 @@ pub fn write_multiple_sheets_arrow_with_configs(
                 .collect::<Result<Vec<_>, WriteError>>()?
         };
 
-    // Build ZIP sequentially (not thread-safe)
     let mut zipper = ZipArchive::new();
     let sheet_names: Vec<&str> = sheets.iter().map(|(_, name, _)| *name).collect();
     let tables_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.tables.len()).collect();
     let charts_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.charts.len()).collect();
 
-    add_static_files(&mut zipper, &sheet_names, style_registry.as_ref(), &tables_per_sheet, &charts_per_sheet);
+    add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet);
 
     let mut global_chart_id = 1;
     let mut global_table_id = 1;

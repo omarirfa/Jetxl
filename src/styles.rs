@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use arrow_array::Array;
 use arrow_schema::DataType;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NumberFormat {
+    // Built-in formats (use Excel's predefined IDs)
     General,
     Integer,
     Decimal2,
@@ -15,23 +16,45 @@ pub enum NumberFormat {
     Date,
     DateTime,
     Time,
+    
+    // Extended built-in formats
+    Scientific,
+    Fraction,
+    FractionTwoDigits,
+    ThousandsSeparator,
+    PercentageInteger,
+    
+    // Custom format string
+    Custom(String),
 }
 
 impl NumberFormat {
-    pub fn num_fmt_id(&self) -> u32 {
+    /// Returns the format ID and optional format code
+    /// Built-in formats return (id, None), custom formats return (id, Some(code))
+    pub fn fmt_info(&self) -> (u32, Option<&str>) {
         match self {
-            NumberFormat::General => 0,
-            NumberFormat::Integer => 165,
-            NumberFormat::Decimal2 => 166,
-            NumberFormat::Decimal4 => 167,
-            NumberFormat::Percentage => 9,
-            NumberFormat::PercentageDecimal => 10,
-            NumberFormat::Currency => 168,
-            NumberFormat::CurrencyRounded => 169,
-            NumberFormat::Date => 14,
-            NumberFormat::DateTime => 164,
-            NumberFormat::Time => 170,
+            NumberFormat::General => (0, None),
+            NumberFormat::Integer => (165, None),
+            NumberFormat::Decimal2 => (166, None),
+            NumberFormat::Decimal4 => (167, None),
+            NumberFormat::Percentage => (9, None),
+            NumberFormat::PercentageDecimal => (10, None),
+            NumberFormat::Currency => (168, None),
+            NumberFormat::CurrencyRounded => (169, None),
+            NumberFormat::Date => (14, None),
+            NumberFormat::DateTime => (164, None),
+            NumberFormat::Time => (170, None),
+            NumberFormat::Scientific => (175, Some("0.00E+00")),
+            NumberFormat::Fraction => (176, Some("# ?/?")),
+            NumberFormat::FractionTwoDigits => (177, Some("# ??/??")),
+            NumberFormat::ThousandsSeparator => (173, Some("#,##0")),
+            NumberFormat::PercentageInteger => (174, Some("0%")),
+            NumberFormat::Custom(ref code) => (0, Some(code.as_str())), // ID assigned by registry
         }
+    }
+    
+    pub fn is_custom(&self) -> bool {
+        matches!(self, NumberFormat::Custom(_))
     }
 }
 
@@ -280,6 +303,8 @@ pub struct StyleRegistry {
     borders: Vec<BorderStyle>,
     cell_xfs: Vec<CellXfEntry>,
     dxfs: Vec<CellStyle>,
+    custom_num_fmts: Vec<(u32, String)>, // (id, format_code)
+    next_custom_fmt_id: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -309,6 +334,8 @@ impl StyleRegistry {
             ],
             cell_xfs: vec![],
             dxfs: Vec::new(),
+            custom_num_fmts: Vec::new(),
+            next_custom_fmt_id: 175,
         };
         
         registry.build_default_xfs();
@@ -328,6 +355,27 @@ impl StyleRegistry {
             CellXfEntry { num_fmt_id: 166, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 0, font_id: 2, fill_id: 0, border_id: 0, alignment: None },
         ];
+    }
+    fn get_or_add_num_fmt(&mut self, fmt: &NumberFormat) -> u32 {
+        let (base_id, code_opt) = fmt.fmt_info();
+        
+        match code_opt {
+            None => base_id, // Built-in format
+            Some(code) => {
+                // Check if this custom format already exists
+                for (id, existing_code) in &self.custom_num_fmts {
+                    if existing_code == code {
+                        return *id;
+                    }
+                }
+                
+                // Add new custom format
+                let id = self.next_custom_fmt_id;
+                self.custom_num_fmts.push((id, code.to_string()));
+                self.next_custom_fmt_id += 1;
+                id
+            }
+        }
     }
     
     pub fn register_cell_style(&mut self, style: &CellStyle) -> u32 {
@@ -350,7 +398,7 @@ impl StyleRegistry {
         };
         
         let num_fmt_id = if let Some(ref fmt) = style.number_format {
-            fmt.num_fmt_id()
+            self.get_or_add_num_fmt(fmt)
         } else {
             0
         };
@@ -414,21 +462,50 @@ impl StyleRegistry {
 }
 
 pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
-    let mut xml = String::with_capacity(2000 + registry.fonts.len() * 200);
+    let base_count = 11; // Base built-in custom formats (164-174)
+    let total_count = base_count + registry.custom_num_fmts.len();
+    
+    let mut xml = String::with_capacity(
+        2000 + registry.fonts.len() * 200 + 
+        registry.custom_num_fmts.len() * 100
+    );
     
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\n");
     
-    xml.push_str("<numFmts count=\"7\">\n");
-    xml.push_str("  <numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd hh:mm:ss\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"165\" formatCode=\"0\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"166\" formatCode=\"0.00\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"167\" formatCode=\"0.0000\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"168\" formatCode=\"$#,##0.00\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"169\" formatCode=\"$#,##0\"/>\n");
-    xml.push_str("  <numFmt numFmtId=\"170\" formatCode=\"hh:mm:ss\"/>\n");
-    xml.push_str("</numFmts>\n");
+    // Number formats section
+    if total_count > 0 {
+        xml.push_str(&format!("<numFmts count=\"{}\">\n", total_count));
+        
+        // Base custom formats (164-174)
+        xml.push_str("  <numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd hh:mm:ss\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"165\" formatCode=\"0\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"166\" formatCode=\"0.00\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"167\" formatCode=\"0.0000\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"168\" formatCode=\"$#,##0.00\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"169\" formatCode=\"$#,##0\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"170\" formatCode=\"hh:mm:ss\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"171\" formatCode=\"_(* #,##0.00_);_(* (#,##0.00);_(* &quot;-&quot;??_);_(@_)\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"172\" formatCode=\"_(* #,##0_);_(* (#,##0);_(* &quot;-&quot;_);_(@_)\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"173\" formatCode=\"#,##0\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"174\" formatCode=\"0%\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"175\" formatCode=\"0.00E+00\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"176\" formatCode=\"# ?/?\"/>\n");
+        xml.push_str("  <numFmt numFmtId=\"177\" formatCode=\"# ??/??\"/>\n");
+        
+        // User-defined custom formats (175+)
+        for (id, code) in &registry.custom_num_fmts {
+            xml.push_str("  <numFmt numFmtId=\"");
+            xml.push_str(&id.to_string());
+            xml.push_str("\" formatCode=\"");
+            xml_escape_format_code(code, &mut xml);
+            xml.push_str("\"/>\n");
+        }
+        
+        xml.push_str("</numFmts>\n");
+    }
     
+    // Fonts section
     xml.push_str(&format!("<fonts count=\"{}\">\n", registry.fonts.len()));
     for font in &registry.fonts {
         xml.push_str("  <font>");
@@ -448,6 +525,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</fonts>\n");
     
+    // Fills section
     xml.push_str(&format!("<fills count=\"{}\">\n", registry.fills.len()));
     for fill in &registry.fills {
         xml.push_str("  <fill>");
@@ -469,6 +547,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</fills>\n");
     
+    // Borders section
     xml.push_str(&format!("<borders count=\"{}\">\n", registry.borders.len()));
     for border in &registry.borders {
         xml.push_str("  <border>");
@@ -481,10 +560,12 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</borders>\n");
     
+    // Cell style XFs
     xml.push_str("<cellStyleXfs count=\"1\">\n");
     xml.push_str("  <xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/>\n");
     xml.push_str("</cellStyleXfs>\n");
     
+    // Cell XFs
     xml.push_str(&format!("<cellXfs count=\"{}\">\n", registry.cell_xfs.len()));
     for xf in &registry.cell_xfs {
         xml.push_str(&format!("  <xf numFmtId=\"{}\" fontId=\"{}\" fillId=\"{}\" borderId=\"0\"", 
@@ -532,15 +613,15 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     }
     xml.push_str("</cellXfs>\n");
     
+    // Cell styles
     xml.push_str("<cellStyles count=\"1\">\n");
     xml.push_str("  <cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/>\n");
     xml.push_str("</cellStyles>\n");
     
+    // DXFs (for conditional formatting)
     xml.push_str(&format!("<dxfs count=\"{}\">\n", registry.dxfs.len()));
     for dxf in &registry.dxfs {
         xml.push_str("  <dxf>");
-        
-        // OOXML spec order: font, numFmt, fill, alignment, border, protection
         
         if let Some(ref font) = dxf.font {
             xml.push_str("<font>");
@@ -554,7 +635,8 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
         }
         
         if let Some(ref fmt) = dxf.number_format {
-            xml.push_str(&format!("<numFmt numFmtId=\"{}\" formatCode=\"\"/>", fmt.num_fmt_id()));
+            let (num_fmt_id, _) = fmt.fmt_info();
+            xml.push_str(&format!("<numFmt numFmtId=\"{}\" formatCode=\"\"/>", num_fmt_id));
         }
         
         if let Some(ref fill) = dxf.fill {
@@ -562,7 +644,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             if let Some(ref fg) = fill.fg_color {
                 xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
                 if fill.bg_color.is_none() {
-                    xml.push_str("<bgColor rgb=\"FFFFFFFF\"/>");  // White, not indexed
+                    xml.push_str("<bgColor rgb=\"FFFFFFFF\"/>");
                 }
             }
             if let Some(ref bg) = fill.bg_color {
@@ -606,6 +688,21 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     
     xml.push_str("</styleSheet>");
     xml
+}
+
+// Helper function for XML escaping format codes
+#[inline]
+fn xml_escape_format_code(code: &str, xml: &mut String) {
+    for ch in code.chars() {
+        match ch {
+            '&' => xml.push_str("&amp;"),
+            '<' => xml.push_str("&lt;"),
+            '>' => xml.push_str("&gt;"),
+            '"' => xml.push_str("&quot;"),
+            '\'' => xml.push_str("&apos;"),
+            _ => xml.push(ch),
+        }
+    }
 }
 
 fn write_border_side(xml: &mut String, side: &str, border: &Option<BorderSide>) {
