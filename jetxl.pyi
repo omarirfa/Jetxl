@@ -1034,6 +1034,7 @@ def write_sheet_arrow(
     freeze_cols: int = 0,
     auto_width: bool = False,
     styled_headers: bool = False,
+    write_header_row: bool = True,
     column_widths: Optional[Dict[str, float]] = None,
     column_formats: Optional[Dict[str, str]] = None,
     merge_cells: Optional[List[Tuple[int, int, int, int]]] = None,
@@ -1066,6 +1067,7 @@ def write_sheet_arrow(
         freeze_cols: Number of columns to freeze
         auto_width: Automatically calculate column widths from content
         styled_headers: Apply bold text + gray background to headers
+        write_header_row: Write column names as first row (default: True)
         column_widths: Manual column widths by name, e.g. {"Name": 20.0, "Age": 10.0}
         column_formats: Number formats by column, e.g. {"Price": "currency", "Date": "date"}
         merge_cells: List of (start_row, start_col, end_row, end_col) to merge
@@ -1090,6 +1092,13 @@ def write_sheet_arrow(
             >>> import pandas as pd
             >>> df = pd.DataFrame({"Name": ["Alice", "Bob"], "Age": [25, 30]})
             >>> jetxl.write_sheet_arrow(df.to_arrow(), "output.xlsx")
+        
+        Data Only (No Headers):
+            >>> jetxl.write_sheet_arrow(
+            >>>    df.to_arrow(),
+            >>>     "data_only.xlsx",
+            >>>     write_header_row=False)  # Skip column names
+
         
         Formatted Output:
             >>> jetxl.write_sheet_arrow(

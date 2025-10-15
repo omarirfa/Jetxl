@@ -106,6 +106,7 @@ jet.write_sheet_arrow(
     freeze_cols=0,                 # Number of columns to freeze
     auto_width=False,              # Auto-calculate column widths
     styled_headers=False,          # Apply bold styling to headers
+    write_header_row=True,         # Write column names as first row
     column_widths=None,            # Dict[str, float] - manual widths
     column_formats=None,           # Dict[str, str] - number formats
     merge_cells=None,              # List[(row, col, row, col)] - merge ranges
@@ -193,6 +194,14 @@ jet.write_sheet_arrow(
     styled_headers=True,        # Bold headers
     auto_width=True             # Auto-size columns
 )
+
+# Without headers (data only)
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "no_headers.xlsx",
+    write_header_row=False  # Skip writing column names
+)
+
 ```
 
 ### Column Formats
