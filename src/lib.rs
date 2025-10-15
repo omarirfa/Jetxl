@@ -107,6 +107,7 @@ fn write_sheets(
     conditional_formats = None,
     tables = None, 
     charts = None,
+    images = None,
 ))]
 
 /// Write Arrow data to an Excel file with advanced formatting options.
@@ -153,6 +154,7 @@ fn write_sheet_arrow(
     conditional_formats: Option<Vec<Bound<PyDict>>>,
     tables: Option<Vec<Bound<PyDict>>>,
     charts: Option<Vec<Bound<PyDict>>>,
+    images: Option<Vec<Bound<PyDict>>>,
 ) -> PyResult<()> {
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
@@ -198,6 +200,7 @@ fn write_sheet_arrow(
         cond_format_dxf_ids: HashMap::new(), 
         tables: Vec::new(), 
         charts: Vec::new(),
+        images: Vec::new(),
     };
 
     // Parse data validations
@@ -248,6 +251,15 @@ fn write_sheet_arrow(
         for chart_dict in charts_vec {
             if let Ok(chart) = extract_chart(&chart_dict) {
                 config.charts.push(chart);
+            }
+        }
+    }
+
+    // Images
+    if let Some(images_vec) = images {
+        for image_dict in images_vec {
+            if let Ok(image) = extract_image(&image_dict) {
+                config.images.push(image);
             }
         }
     }
@@ -333,6 +345,18 @@ fn write_sheets_arrow(
                 if let Ok(chart_dict) = chart_dict.downcast::<PyDict>() {
                     if let Ok(chart) = extract_chart(&chart_dict) {
                         config.charts.push(chart);
+                    }
+                }
+            }
+        }
+
+        // images
+        if let Some(images_vec) = sheet_dict.get_item("images")? {
+            let images_list = images_vec.downcast::<pyo3::types::PyList>()?;
+            for image_dict in images_list.iter() {
+                if let Ok(image_dict) = image_dict.downcast::<PyDict>() {
+                    if let Ok(image) = extract_image(&image_dict) {
+                        config.images.push(image);
                     }
                 }
             }
@@ -776,4 +800,27 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
     }
     
     Ok(chart)
+}
+
+fn extract_image(dict: &Bound<PyDict>) -> PyResult<ExcelImage> {
+    let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
+    let from_row: usize = dict.get_item("from_row")?.unwrap().extract()?;
+    let to_col: usize = dict.get_item("to_col")?.unwrap().extract()?;
+    let to_row: usize = dict.get_item("to_row")?.unwrap().extract()?;
+    
+    let position = ImagePosition { from_col, from_row, to_col, to_row };
+    
+    let image = if let Some(path) = dict.get_item("path")? {
+        let path_str: String = path.extract()?;
+        ExcelImage::from_path(&path_str, position)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to read image: {}", e)))?
+    } else if let Some(data) = dict.get_item("data")? {
+        let bytes: Vec<u8> = data.extract()?;
+        let ext: String = dict.get_item("extension")?.unwrap().extract()?;
+        ExcelImage::from_bytes(bytes, ext, position)
+    } else {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Image must have 'path' or 'data'"));
+    };
+    
+    Ok(image)
 }

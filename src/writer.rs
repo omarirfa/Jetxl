@@ -1,6 +1,7 @@
 use crate::types::{SheetData, WriteError};
-use crate::styles::{StyleConfig, generate_styles_xml, generate_styles_xml_enhanced, StyleRegistry, ConditionalRule, CellStyle};
-use crate::xml;
+use crate::styles::{StyleConfig, generate_styles_xml, generate_styles_xml_enhanced, StyleRegistry, ConditionalRule, CellStyle, ExcelImage};
+// use crate::xml::{self, generate_drawing_xml_combined, generate_drawing_rels_combined};
+use crate::xml::{self, generate_drawing_xml_combined, generate_drawing_rels_combined};
 use mtzip::{level::CompressionLevel, ZipArchive};
 use std::fs::File;
 use std::io::Write;
@@ -20,7 +21,7 @@ pub fn write_single_sheet(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet.name.as_str()];
     
-    add_static_files(&mut zipper, &sheet_names, None, &[0], &[0]);
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &[0], &[]);
     
     let config = StyleConfig::default();
     let xml_data = xml::generate_sheet_xml_from_dict(sheet, &config)?;
@@ -44,7 +45,7 @@ pub fn write_single_sheet_with_config(
     let sheet_names = vec![sheet.name.as_str()];
     let charts_count = vec![config.charts.len()];
     
-    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count);
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count, &[(vec![], 0)]);
     
     let xml_data = xml::generate_sheet_xml_from_dict(sheet, config)?;
     zipper
@@ -60,7 +61,7 @@ pub fn write_single_sheet_with_config(
             .compression_level(CompressionLevel::fast())
             .done();
         
-        let drawing_rels = xml::generate_drawing_rels(config.charts.len());
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
@@ -127,7 +128,7 @@ pub fn write_multiple_sheets(
     let mut zipper = ZipArchive::new();
     let sheet_names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
 
-    add_static_files(&mut zipper, &sheet_names, None, &vec![0; sheets.len()], &vec![0; sheets.len()]);
+    add_static_files(&mut zipper, &sheet_names, None, &vec![0; sheets.len()], &vec![0; sheets.len()], &vec![(vec![], 0); sheets.len()]);
 
     for (idx, xml_data) in xml_sheets.into_iter().enumerate() {
         zipper
@@ -183,8 +184,11 @@ pub fn write_single_sheet_arrow_with_config(
         HashMap::new()
     };
 
+    // Build cell style map - register and map user's custom cell styles
+    let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
     for cell_style in &config.cell_styles {
-        registry.register_cell_style(&cell_style.style);
+        let style_id = registry.register_cell_style(&cell_style.style);
+        cell_style_map.insert((cell_style.row, cell_style.col), style_id);
     }
 
     if !config.conditional_formats.is_empty() {
@@ -205,10 +209,19 @@ pub fn write_single_sheet_arrow_with_config(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet_name];
     let charts_count = vec![config.charts.len()];
+    let images_data = vec![(config.images.clone(), if config.images.is_empty() { 0 } else { 1 })];
     
-    add_static_files(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count);
+    add_static_files(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count, &images_data);
     
-    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map)?;
+    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map, &cell_style_map)?;
+    
+    // DEBUG: Check for leading garbage
+    if xml_data.len() > 0 {
+        eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
+        eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
+    }
+
+    
     zipper
         .add_file_from_memory(xml_data, "xl/worksheets/sheet1.xml".to_string())
         .compression_level(CompressionLevel::fast())
@@ -220,7 +233,7 @@ pub fn write_single_sheet_arrow_with_config(
         .map(|(idx, h)| (h.url.clone(), idx + 1))
         .collect();
     
-    let has_any_rels = !config.hyperlinks.is_empty() || !config.tables.is_empty() || !config.charts.is_empty();
+    let has_any_rels = !config.hyperlinks.is_empty() || !config.tables.is_empty() || !config.charts.is_empty() || !config.images.is_empty();
     
     if has_any_rels {
         let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
@@ -233,7 +246,7 @@ pub fn write_single_sheet_arrow_with_config(
             rels_xml.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", idx + 1, idx + 1));
         }
         
-        if !config.charts.is_empty() {
+        if !config.charts.is_empty() || !config.images.is_empty() {
             rels_xml.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
         }
         
@@ -249,6 +262,12 @@ pub fn write_single_sheet_arrow_with_config(
         for (idx, table) in config.tables.iter().enumerate() {
             let table_id = (idx + 1) as u32;
             
+            // If table starts after row 1, we inserted a header row, so adjust end_row
+            let mut adjusted_table = table.clone();
+            if adjusted_table.range.0 > 1 {
+                adjusted_table.range.2 += 1; // end_row++
+            }
+            
             let col_names = if table.column_names.is_empty() && !batches.is_empty() {
                 let schema = batches[0].schema();
                 let (_, start_col, _, end_col) = table.range;
@@ -260,7 +279,7 @@ pub fn write_single_sheet_arrow_with_config(
                 table.column_names.clone()
             };
             
-            let table_xml = xml::generate_table_xml(table, table_id, &col_names);
+            let table_xml = xml::generate_table_xml(&adjusted_table, table_id, &col_names);
             zipper
                 .add_file_from_memory(
                     table_xml.into_bytes(),
@@ -271,14 +290,16 @@ pub fn write_single_sheet_arrow_with_config(
         }
     }
     
-    if !config.charts.is_empty() {
-        let drawing_xml = xml::generate_drawing_xml(&config.charts);
+    let has_drawing = !config.charts.is_empty() || !config.images.is_empty();;
+    
+    if has_drawing {
+        let drawing_xml = generate_drawing_xml_combined(&config.charts, &config.images);
         zipper
             .add_file_from_memory(drawing_xml.into_bytes(), "xl/drawings/drawing1.xml".to_string())
             .compression_level(CompressionLevel::fast())
             .done();
         
-        let drawing_rels = xml::generate_drawing_rels(config.charts.len());
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
@@ -290,6 +311,17 @@ pub fn write_single_sheet_arrow_with_config(
                 .add_file_from_memory(
                     chart_xml.into_bytes(),
                     format!("xl/charts/chart{}.xml", idx + 1)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        // Add image files
+        for (idx, image) in config.images.iter().enumerate() {
+            zipper
+                .add_file_from_memory(
+                    image.image_data.clone(),
+                    format!("xl/media/image{}.{}", idx + 1, image.extension)
                 )
                 .compression_level(CompressionLevel::fast())
                 .done();
@@ -322,6 +354,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
 
     let mut style_registry = StyleRegistry::new();
     let mut sheet_col_format_maps = Vec::new();
+    let mut sheet_cell_style_maps = Vec::new();
     let mut sheet_dxf_mappings = Vec::new();
 
     for (batches, _, config) in sheets {
@@ -347,9 +380,13 @@ pub fn write_multiple_sheets_arrow_with_configs(
         };
         sheet_col_format_maps.push(col_format_map);
 
+        // Build cell style map for this sheet
+        let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
         for cell_style in &config.cell_styles {
-            style_registry.register_cell_style(&cell_style.style);
+            let style_id = style_registry.register_cell_style(&cell_style.style);
+            cell_style_map.insert((cell_style.row, cell_style.col), style_id);
         }
+        sheet_cell_style_maps.push(cell_style_map);
 
         let mut dxf_ids = HashMap::new();
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
@@ -383,7 +420,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
                         }
                         
                         let col_format_map = &sheet_col_format_maps[sheet_idx];
-                        let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map)?;
+                        let cell_style_map = &sheet_cell_style_maps[sheet_idx];
+                        let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map, cell_style_map)?;
                         let hyperlinks: Vec<(String, usize)> = modified_config.hyperlinks
                             .iter()
                             .enumerate()
@@ -404,7 +442,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
                     }
                     
                     let col_format_map = &sheet_col_format_maps[sheet_idx];
-                    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map)?;
+                    let cell_style_map = &sheet_cell_style_maps[sheet_idx];
+                    let xml_data = xml::generate_sheet_xml_from_arrow(batches, &modified_config, col_format_map, cell_style_map)?;
                     let hyperlinks: Vec<(String, usize)> = modified_config.hyperlinks
                         .iter()
                         .enumerate()
@@ -420,7 +459,13 @@ pub fn write_multiple_sheets_arrow_with_configs(
     let tables_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.tables.len()).collect();
     let charts_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.charts.len()).collect();
 
-    add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet);
+    let images_per_sheet: Vec<(Vec<ExcelImage>, usize)> = sheets.iter()
+        .map(|(_, _, cfg)| {
+            let count = if cfg.images.is_empty() { 0 } else { 1 };
+            (cfg.images.clone(), count)
+    })
+    .collect();
+add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet, &images_per_sheet);
 
     let mut global_chart_id = 1;
     let mut global_table_id = 1;
@@ -437,8 +482,9 @@ pub fn write_multiple_sheets_arrow_with_configs(
         let has_hyperlinks = !hyperlinks.is_empty();
         let has_tables = !sheet_config.tables.is_empty();
         let has_charts = !sheet_config.charts.is_empty();
-        
-        if has_hyperlinks || has_tables || has_charts {
+        let has_images = !sheet_config.images.is_empty();
+
+        if has_hyperlinks || has_tables || has_charts || has_images {
             let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
             
             for (url, rid) in &hyperlinks {
@@ -452,7 +498,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
                     sheet_start_table_id + i));
             }
             
-            if has_charts {
+            if has_charts || has_images {
                 rels_xml.push_str(&format!("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{}.xml\"/>\n", drawing_id));
             }
             
@@ -492,23 +538,17 @@ pub fn write_multiple_sheets_arrow_with_configs(
             }
         }
         
-        if has_charts {
+        let has_images = !sheet_config.images.is_empty();
+        if has_charts || has_images {
             let sheet_start_chart_id = global_chart_id;
             
-            let drawing_xml = xml::generate_drawing_xml(&sheet_config.charts);
+            let drawing_xml = generate_drawing_xml_combined(&sheet_config.charts, &sheet_config.images);
             zipper
                 .add_file_from_memory(drawing_xml.into_bytes(), format!("xl/drawings/drawing{}.xml", drawing_id))
                 .compression_level(CompressionLevel::fast())
                 .done();
             
-            let mut drawing_rels = String::with_capacity(300 + sheet_config.charts.len() * 150);
-            drawing_rels.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
-            for i in 0..sheet_config.charts.len() {
-                drawing_rels.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", 
-                    i + 1, 
-                    sheet_start_chart_id + i));
-            }
-            drawing_rels.push_str("</Relationships>");
+            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images);
             
             zipper
                 .add_file_from_memory(drawing_rels.into_bytes(), format!("xl/drawings/_rels/drawing{}.xml.rels", drawing_id))
@@ -525,6 +565,16 @@ pub fn write_multiple_sheets_arrow_with_configs(
                     .compression_level(CompressionLevel::fast())
                     .done();
                 global_chart_id += 1;
+            }
+            // Add image files
+            for (idx, image) in sheet_config.images.iter().enumerate() {
+                zipper
+                    .add_file_from_memory(
+                        image.image_data.clone(),
+                        format!("xl/media/image{}.{}", idx + 1, image.extension)
+                    )
+                    .compression_level(CompressionLevel::fast())
+                    .done();
             }
             
             drawing_id += 1;
@@ -544,14 +594,19 @@ fn add_static_files(
     style_registry: Option<&StyleRegistry>,
     tables_count: &[usize], // Number of tables per sheet
     charts_count: &[usize],
+    images_data: &[(Vec<ExcelImage>, usize)],
 ) {
-    zipper
-        .add_file_from_memory(
-            xml::generate_content_types_with_charts(sheet_names, tables_count, charts_count).into_bytes(),
-            "[Content_Types].xml".to_string(),
-        )
-        .compression_level(CompressionLevel::fast())
-        .done();
+    let images_per_sheet: Vec<(&[ExcelImage], usize)> = images_data.iter()
+            .map(|(imgs, count)| (imgs.as_slice(), *count))
+            .collect();
+        
+        zipper
+            .add_file_from_memory(
+                xml::generate_content_types_with_charts(sheet_names, tables_count, charts_count, &images_per_sheet).into_bytes(),
+                "[Content_Types].xml".to_string(),
+            )
+            .compression_level(CompressionLevel::fast())
+            .done();
     
     zipper
         .add_file_from_memory(

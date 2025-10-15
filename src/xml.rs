@@ -177,17 +177,47 @@ pub fn generate_content_types(sheet_names: &[&str], tables_per_sheet: &[usize]) 
     xml
 }
 
-pub fn generate_content_types_with_charts(sheet_names: &[&str], tables_per_sheet: &[usize], charts_per_sheet: &[usize]) -> String {
+pub fn generate_content_types_with_charts(
+    sheet_names: &[&str], 
+    tables_per_sheet: &[usize], 
+    charts_per_sheet: &[usize],
+    images_per_sheet: &[(&[ExcelImage], usize)]
+) -> String {
     let total_tables: usize = tables_per_sheet.iter().sum();
     let total_charts: usize = charts_per_sheet.iter().sum();
-    let mut xml = String::with_capacity(1000 + sheet_names.len() * 150 + total_tables * 100 + total_charts * 100);
+    
+    // Collect unique image extensions
+    let mut image_extensions = std::collections::HashSet::new();
+    for (images, _) in images_per_sheet {
+        for img in *images {
+            image_extensions.insert(img.extension.as_str());
+        }
+    }
+    
+    let mut xml = String::with_capacity(1000 + sheet_names.len() * 150 + total_tables * 100 + total_charts * 100 + image_extensions.len() * 100);
     
     xml.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
-<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
-<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+    );
+    
+    // Add image extensions
+    for ext in &image_extensions {
+        let content_type = match *ext {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "bmp" => "image/bmp",
+            "tiff" | "tif" => "image/tiff",
+            _ => "application/octet-stream",
+        };
+        xml.push_str(&format!("<Default Extension=\"{}\" ContentType=\"{}\"/>", ext, content_type));
+    }
+    
+    xml.push_str(
+        "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
 <Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>\
 <Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>\
 <Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>",
@@ -199,7 +229,6 @@ pub fn generate_content_types_with_charts(sheet_names: &[&str], tables_per_sheet
         xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
     }
 
-    // Tables
     let mut table_id = 1;
     for &table_count in tables_per_sheet {
         for _ in 0..table_count {
@@ -210,7 +239,6 @@ pub fn generate_content_types_with_charts(sheet_names: &[&str], tables_per_sheet
         }
     }
     
-    // Charts
     let mut chart_id = 1;
     for &chart_count in charts_per_sheet {
         for _ in 0..chart_count {
@@ -221,9 +249,8 @@ pub fn generate_content_types_with_charts(sheet_names: &[&str], tables_per_sheet
         }
     }
     
-    // Drawings - only for sheets with charts
-    for (i, &chart_count) in charts_per_sheet.iter().enumerate() {
-        if chart_count > 0 {
+    for (i, &(_, drawing_count)) in images_per_sheet.iter().enumerate() {
+        if drawing_count > 0 {
             xml.push_str("<Override PartName=\"/xl/drawings/drawing");
             xml.push_str(&(i + 1).to_string());
             xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>");
@@ -1138,11 +1165,13 @@ pub fn generate_drawing_rels(num_charts: usize) -> String {
 
 /// Generate complete sheet XML with all enhanced features
 /// Element order: dimension → sheetViews → sheetFormatPr → cols → sheetData → 
-///                autoFilter → mergeCells → dataValidations → hyperlinks → conditionalFormatting
+///                autoFilter → mergeCells → conditionalFormatting → dataValidations → 
+///                hyperlinks → drawing → tableParts
 pub fn generate_sheet_xml_from_arrow(
     batches: &[RecordBatch],
     config: &StyleConfig,
     col_format_map: &HashMap<usize, u32>,
+    cell_style_map: &HashMap<(usize, usize), u32>,
 ) -> Result<Vec<u8>, WriteError> {
     if batches.is_empty() {
         return Ok(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
@@ -1160,7 +1189,16 @@ pub fn generate_sheet_xml_from_arrow(
 <dimension ref=\"A1\"/><sheetData/></worksheet>".to_vec());
     }
 
-    let cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
+    // Build map of table header rows that need to be inserted
+    let mut table_header_rows: HashMap<usize, (usize, usize)> = HashMap::new();
+    let mut num_inserted_headers = 0;
+    for table in &config.tables {
+        let (start_row, start_col, _, end_col) = table.range;
+        if start_row > 1 {
+            table_header_rows.insert(start_row, (start_col, end_col));
+            num_inserted_headers += 1;
+        }
+    }
 
     let exact_size = calculate_exact_xml_size(batches)?;
     let mut buf = Vec::with_capacity(exact_size);
@@ -1168,6 +1206,7 @@ pub fn generate_sheet_xml_from_arrow(
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
 
+    // Dimension
     buf.extend_from_slice(b"<dimension ref=\"");
     if total_rows > 0 {
         buf.extend_from_slice(b"A1:");
@@ -1176,12 +1215,13 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(&col_buf[..col_len]);
         
         let mut row_buf = itoa::Buffer::new();
-        buf.extend_from_slice(row_buf.format(total_rows + 1).as_bytes());
+        buf.extend_from_slice(row_buf.format(total_rows + 1 + num_inserted_headers).as_bytes());
     } else {
         buf.extend_from_slice(b"A1");
     }
     buf.extend_from_slice(b"\"/>");
 
+    // SheetViews (with optional freeze panes)
     buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
         buf.push(b'>');
@@ -1207,10 +1247,12 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"/></sheetViews>");
     }
 
+    // SheetFormatPr (optional custom row heights)
     if config.row_heights.is_some() {
         buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"15\"/>");
     }
 
+    // Cols (column widths)
     if config.auto_width || config.column_widths.is_some() {
         buf.extend_from_slice(b"<cols>");
         
@@ -1241,6 +1283,7 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</cols>");
     }
 
+    // SheetData (all cell data)
     buf.extend_from_slice(b"<sheetData>");
 
     let col_letters: Vec<([u8; 4], usize)> = (0..num_cols)
@@ -1266,6 +1309,7 @@ pub fn generate_sheet_xml_from_arrow(
         .map(|f| ((f.row, f.col), f))
         .collect();
 
+    // Write header row (row 1)
     let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
     buf.extend_from_slice(b"<row r=\"1\"");
     if let Some(height) = header_row_height {
@@ -1296,10 +1340,59 @@ pub fn generate_sheet_xml_from_arrow(
 
     let mut current_row = 2;
     
+    // Write data rows (with optional table header insertion)
     for batch in batches {
         let batch_rows = batch.num_rows();
         
         for row_idx in 0..batch_rows {
+            // Check if we need to insert table header row before this data row
+            if let Some(&(start_col, end_col)) = table_header_rows.get(&current_row) {
+                let row_str = int_buf.format(current_row);
+                let row_bytes = row_str.as_bytes();
+                
+                buf.extend_from_slice(b"<row r=\"");
+                buf.extend_from_slice(row_bytes);
+                buf.extend_from_slice(b"\"");
+                
+                if let Some(heights) = &config.row_heights {
+                    if let Some(height) = heights.get(&current_row) {
+                        buf.extend_from_slice(b" ht=\"");
+                        buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                        buf.extend_from_slice(b"\" customHeight=\"1\"");
+                    }
+                }
+                
+                buf.extend_from_slice(b">");
+                
+                // Write header cells for table columns
+                for col_idx in start_col..=end_col {
+                    let (col_letter, col_len) = &col_letters[col_idx];
+                    let field_name = schema.fields()[col_idx].name();
+                    
+                    // Create fresh buffer for this cell
+                    let mut header_cell_ref = Vec::with_capacity(16);
+                    header_cell_ref.extend_from_slice(&col_letter[..*col_len]);
+                    header_cell_ref.extend_from_slice(row_bytes);
+                    
+                    // Check for custom style on header cell
+                    let custom_style_id = cell_style_map.get(&(current_row, col_idx)).copied();
+                    
+                    buf.extend_from_slice(b"<c r=\"");
+                    buf.extend_from_slice(&header_cell_ref);
+                    if let Some(sid) = custom_style_id {
+                        buf.extend_from_slice(b"\" s=\"");
+                        buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+                    }
+                    buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
+                    xml_escape_simd(field_name.as_bytes(), &mut buf);
+                    buf.extend_from_slice(b"</t></is></c>");
+                }
+                
+                buf.extend_from_slice(b"</row>");
+                current_row += 1;
+            }
+            
+            // Write actual data row
             let row_num = current_row;
             let row_str = int_buf.format(row_num);
             let row_bytes = row_str.as_bytes();
@@ -1356,20 +1449,7 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
-    if !config.tables.is_empty() {
-        buf.extend_from_slice(b"<tableParts count=\"");
-        buf.extend_from_slice(itoa::Buffer::new().format(config.tables.len()).as_bytes());
-        buf.extend_from_slice(b"\">");
-        
-        for idx in 0..config.tables.len() {
-            buf.extend_from_slice(b"<tablePart r:id=\"rIdTable");
-            buf.extend_from_slice(itoa::Buffer::new().format(idx + 1).as_bytes());
-            buf.extend_from_slice(b"\"/>");
-        }
-        
-        buf.extend_from_slice(b"</tableParts>");
-    }
-
+    // AutoFilter
     if config.auto_filter && total_rows > 0 {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
         let mut col_buf = [0u8; 4];
@@ -1379,6 +1459,7 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"\"/>");
     }
 
+    // MergeCells
     if !config.merge_cells.is_empty() {
         buf.extend_from_slice(b"<mergeCells count=\"");
         buf.extend_from_slice(itoa::Buffer::new().format(config.merge_cells.len()).as_bytes());
@@ -1395,10 +1476,12 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</mergeCells>");
     }
 
+    // ConditionalFormatting
     if !config.conditional_formats.is_empty() {
         write_conditional_formatting(&mut buf, &config.conditional_formats, config);
     }
 
+    // DataValidations
     if !config.data_validations.is_empty() {
         buf.extend_from_slice(b"<dataValidations count=\"");
         buf.extend_from_slice(itoa::Buffer::new().format(config.data_validations.len()).as_bytes());
@@ -1479,6 +1562,7 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</dataValidations>");
     }
 
+    // Hyperlinks
     if !config.hyperlinks.is_empty() {
         buf.extend_from_slice(b"<hyperlinks>");
         
@@ -1493,8 +1577,24 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</hyperlinks>");
     }
 
-    if !config.charts.is_empty() {
+    // Drawing (for charts and images)
+    if !config.charts.is_empty() || !config.images.is_empty() {
         buf.extend_from_slice(b"<drawing r:id=\"rIdDraw1\"/>");
+    }
+
+    // TableParts (MUST be after drawing)
+    if !config.tables.is_empty() {
+        buf.extend_from_slice(b"<tableParts count=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(config.tables.len()).as_bytes());
+        buf.extend_from_slice(b"\">");
+        
+        for idx in 0..config.tables.len() {
+            buf.extend_from_slice(b"<tablePart r:id=\"rIdTable");
+            buf.extend_from_slice(itoa::Buffer::new().format(idx + 1).as_bytes());
+            buf.extend_from_slice(b"\"/>");
+        }
+        
+        buf.extend_from_slice(b"</tableParts>");
     }
 
     buf.extend_from_slice(b"</worksheet>");
@@ -2099,4 +2199,128 @@ fn estimate_avg_cell_size(sheet: &SheetData) -> usize {
     }
     
     (total / (sample_size * sheet.num_cols())).max(25)
+}
+
+// After generate_drawing_rels function, add:
+
+/// Generate drawing XML with both charts and images
+pub fn generate_drawing_xml_combined(charts: &[ExcelChart], images: &[ExcelImage]) -> String {
+    let total_elements = charts.len() + images.len();
+    let mut xml = String::with_capacity(2000 + total_elements * 1000);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" ");
+    xml.push_str("xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\n");
+    
+    let mut element_id = 1;
+    
+    // Add charts
+    for (idx, chart) in charts.iter().enumerate() {
+        let chart_id = idx + 1;
+        xml.push_str("<xdr:twoCellAnchor>\n");
+        
+        xml.push_str("<xdr:from>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", chart.position.from_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", chart.position.from_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:from>\n");
+        
+        xml.push_str("<xdr:to>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", chart.position.to_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", chart.position.to_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:to>\n");
+        
+        xml.push_str("<xdr:graphicFrame macro=\"\">\n");
+        xml.push_str("<xdr:nvGraphicFramePr>\n");
+        xml.push_str(&format!("<xdr:cNvPr id=\"{}\" name=\"Chart {}\"/>\n", element_id, chart_id));
+        element_id += 1;
+        xml.push_str("<xdr:cNvGraphicFramePr/>\n");
+        xml.push_str("</xdr:nvGraphicFramePr>\n");
+        xml.push_str("<xdr:xfrm>\n");
+        xml.push_str("<a:off x=\"0\" y=\"0\"/>\n");
+        xml.push_str("<a:ext cx=\"0\" cy=\"0\"/>\n");
+        xml.push_str("</xdr:xfrm>\n");
+        xml.push_str("<a:graphic>\n");
+        xml.push_str("<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\n");
+        xml.push_str(&format!("<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rIdChart{}\"/>\n", chart_id));
+        xml.push_str("</a:graphicData>\n");
+        xml.push_str("</a:graphic>\n");
+        xml.push_str("</xdr:graphicFrame>\n");
+        xml.push_str("<xdr:clientData/>\n");
+        xml.push_str("</xdr:twoCellAnchor>\n");
+    }
+    
+    // Add images
+    for (idx, image) in images.iter().enumerate() {
+        let image_id = idx + 1;
+        xml.push_str("<xdr:twoCellAnchor>\n");
+        
+        xml.push_str("<xdr:from>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", image.position.from_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", image.position.from_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:from>\n");
+        
+        xml.push_str("<xdr:to>\n");
+        xml.push_str(&format!("<xdr:col>{}</xdr:col>\n", image.position.to_col));
+        xml.push_str("<xdr:colOff>0</xdr:colOff>\n");
+        xml.push_str(&format!("<xdr:row>{}</xdr:row>\n", image.position.to_row));
+        xml.push_str("<xdr:rowOff>0</xdr:rowOff>\n");
+        xml.push_str("</xdr:to>\n");
+        
+        xml.push_str("<xdr:pic>\n");
+        xml.push_str("<xdr:nvPicPr>\n");
+        xml.push_str(&format!("<xdr:cNvPr id=\"{}\" name=\"Image {}\"/>\n", element_id, image_id));
+        element_id += 1;
+        xml.push_str("<xdr:cNvPicPr>\n");
+        xml.push_str("<a:picLocks noChangeAspect=\"1\"/>\n");
+        xml.push_str("</xdr:cNvPicPr>\n");
+        xml.push_str("</xdr:nvPicPr>\n");
+        
+        xml.push_str("<xdr:blipFill>\n");
+        xml.push_str(&format!("<a:blip xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:embed=\"rIdImage{}\"/>\n", image_id));
+        xml.push_str("<a:stretch>\n");
+        xml.push_str("<a:fillRect/>\n");
+        xml.push_str("</a:stretch>\n");
+        xml.push_str("</xdr:blipFill>\n");
+        
+        xml.push_str("<xdr:spPr>\n");
+        xml.push_str("<a:xfrm>\n");
+        xml.push_str("<a:off x=\"0\" y=\"0\"/>\n");
+        xml.push_str("<a:ext cx=\"0\" cy=\"0\"/>\n");
+        xml.push_str("</a:xfrm>\n");
+        xml.push_str("<a:prstGeom prst=\"rect\">\n");
+        xml.push_str("<a:avLst/>\n");
+        xml.push_str("</a:prstGeom>\n");
+        xml.push_str("</xdr:spPr>\n");
+        
+        xml.push_str("</xdr:pic>\n");
+        xml.push_str("<xdr:clientData/>\n");
+        xml.push_str("</xdr:twoCellAnchor>\n");
+    }
+    
+    xml.push_str("</xdr:wsDr>");
+    xml
+}
+
+/// Generate drawing relationships for both charts and images
+pub fn generate_drawing_rels_combined(num_charts: usize, images: &[ExcelImage]) -> String {
+    let mut xml = String::with_capacity(300 + (num_charts + images.len()) * 150);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
+    xml.push_str("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+    
+    for i in 1..=num_charts {
+        xml.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", i, i));
+    }
+    
+    for (idx, image) in images.iter().enumerate() {
+        let i = idx + 1;
+        xml.push_str(&format!("<Relationship Id=\"rIdImage{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image{}.{}\"/>\n", i, i, image.extension));
+    }
+    
+    xml.push_str("</Relationships>");
+    xml
 }
