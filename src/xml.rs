@@ -1309,36 +1309,39 @@ pub fn generate_sheet_xml_from_arrow(
         .map(|f| ((f.row, f.col), f))
         .collect();
 
-    // Write header row (row 1)
-    let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
-    buf.extend_from_slice(b"<row r=\"1\"");
-    if let Some(height) = header_row_height {
-        buf.extend_from_slice(b" ht=\"");
-        buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
-        buf.extend_from_slice(b"\" customHeight=\"1\"");
-    }
-    buf.extend_from_slice(b">");
-    
-    for (col_idx, field) in schema.fields().iter().enumerate() {
-        let (col_letter, col_len) = &col_letters[col_idx];
-        
-        let style_id = if config.styled_headers { 2 } else { 0 };
-        
-        buf.extend_from_slice(b"<c r=\"");
-        buf.extend_from_slice(&col_letter[..*col_len]);
-        buf.extend_from_slice(b"1\"");
-        if style_id > 0 {
-            buf.extend_from_slice(b" s=\"");
-            buf.extend_from_slice(int_buf.format(style_id).as_bytes());
-            buf.extend_from_slice(b"\"");
-        }
-        buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
-        xml_escape_simd(field.name().as_bytes(), &mut buf);
-        buf.extend_from_slice(b"</t></is></c>");
-    }
-    buf.extend_from_slice(b"</row>");
 
-    let mut current_row = 2;
+    // Write header row (row 1) - only if enabled
+    if config.write_header_row {
+        let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
+        buf.extend_from_slice(b"<row r=\"1\"");
+        if let Some(height) = header_row_height {
+            buf.extend_from_slice(b" ht=\"");
+            buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+            buf.extend_from_slice(b"\" customHeight=\"1\"");
+        }
+        buf.extend_from_slice(b">");
+        
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let (col_letter, col_len) = &col_letters[col_idx];
+            
+            let style_id = if config.styled_headers { 2 } else { 0 };
+            
+            buf.extend_from_slice(b"<c r=\"");
+            buf.extend_from_slice(&col_letter[..*col_len]);
+            buf.extend_from_slice(b"1\"");
+            if style_id > 0 {
+                buf.extend_from_slice(b" s=\"");
+                buf.extend_from_slice(int_buf.format(style_id).as_bytes());
+                buf.extend_from_slice(b"\"");
+            }
+            buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
+            xml_escape_simd(field.name().as_bytes(), &mut buf);
+            buf.extend_from_slice(b"</t></is></c>");
+        }
+        buf.extend_from_slice(b"</row>");
+    }
+
+    let mut current_row = if config.write_header_row { 2 } else { 1 };
     
     // Write data rows (with optional table header insertion)
     for batch in batches {

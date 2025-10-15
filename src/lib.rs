@@ -96,6 +96,7 @@ fn write_sheets(
     freeze_cols = 0,
     auto_width = false,
     styled_headers = false,
+    write_header_row = true,
     column_widths = None,
     column_formats = None,
     merge_cells = None,
@@ -143,6 +144,7 @@ fn write_sheet_arrow(
     freeze_cols: usize,
     auto_width: bool,
     styled_headers: bool,
+    write_header_row: bool,
     column_widths: Option<HashMap<String, f64>>,
     column_formats: Option<HashMap<String, String>>,
     merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
@@ -179,6 +181,7 @@ fn write_sheet_arrow(
         freeze_rows,
         freeze_cols,
         styled_headers,
+        write_header_row,
         column_widths,
         auto_width,
         column_formats: column_formats.map(|cf| {
