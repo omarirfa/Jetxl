@@ -8,7 +8,7 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 - 🚀 **Ultra-fast**: 10-100x faster than traditional Python Excel libraries
 - 🔄 **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
 - 🎨 **Rich formatting**: Fonts, colors, borders, alignment, number formats
-- 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts
+- 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts, images
 - 🧵 **Multi-threaded**: Parallel sheet generation for multi-sheet workbooks
 - 💾 **Memory efficient**: Streaming XML generation with minimal memory overhead
 - 🐻‍❄️🐼 **Framework agnostic**: Works seamlessly with Polars, Pandas, PyArrow, and native Python dicts
@@ -116,7 +116,8 @@ jet.write_sheet_arrow(
     formulas=None,                 # List[(row, col, formula, cached_value)]
     conditional_formats=None,      # List[dict] - conditional formatting
     tables=None,                   # List[dict] - Excel table definitions
-    charts=None                    # List[dict] - Excel chart definitions
+    charts=None,                   # List[dict] - Excel chart definitions
+    images=None                    # List[dict] - Excel image definitions
 )
 ```
 
@@ -130,7 +131,8 @@ sheets = [
         "data": df1.to_arrow(),
         "name": "Sales",
         "auto_filter": True,
-        "charts": [...]  # Optional charts for this sheet
+        "charts": [...],  # Optional charts for this sheet
+        "images": [...]   # Optional images for this sheet
     },
     {
         "data": df2.to_arrow(),
@@ -1108,6 +1110,324 @@ charts = [{
 jet.write_sheet(data, "legacy_chart.xlsx", charts=charts)
 ```
 
+## 🖼️ Excel Images
+
+Add images (logos, charts, diagrams) to your Excel sheets with precise positioning control. Jetxl supports loading images from files or raw bytes.
+
+### Supported Image Formats
+
+- PNG (`.png`)
+- JPEG (`.jpg`, `.jpeg`)
+- GIF (`.gif`)
+- BMP (`.bmp`)
+- TIFF (`.tiff`, `.tif`)
+
+### Adding Images from Files
+
+The simplest way to add images is from file paths:
+
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Product": ["Widget A", "Widget B", "Widget C"],
+    "Sales": [1000, 1500, 1200]
+})
+
+images = [{
+    "path": "company_logo.png",
+    "from_col": 0,   # Column A (0-based)
+    "from_row": 0,   # Row 1 (0-based)
+    "to_col": 2,     # Column C
+    "to_row": 5      # Row 6
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "report_with_logo.xlsx",
+    images=images
+)
+```
+
+### Adding Images from Bytes
+
+Load images from memory (useful for API responses, databases, or generated images):
+
+```python
+import requests
+import jetxl as jet
+
+# Download image from URL
+response = requests.get("https://example.com/chart.png")
+image_bytes = response.content
+
+# Or read from file
+with open("logo.png", "rb") as f:
+    image_bytes = f.read()
+
+images = [{
+    "data": image_bytes,
+    "extension": "png",  # Required when using bytes
+    "from_col": 5,
+    "from_row": 1,
+    "to_col": 12,
+    "to_row": 15
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "report.xlsx",
+    images=images
+)
+```
+
+### Multiple Images
+
+Add multiple images to the same sheet:
+
+```python
+images = [
+    {
+        # Company logo in top-left
+        "path": "company_logo.png",
+        "from_col": 0,
+        "from_row": 0,
+        "to_col": 2,
+        "to_row": 4
+    },
+    {
+        # Product image on the right
+        "path": "product_photo.jpg",
+        "from_col": 8,
+        "from_row": 2,
+        "to_col": 12,
+        "to_row": 10
+    },
+    {
+        # Chart at the bottom
+        "path": "sales_chart.png",
+        "from_col": 0,
+        "from_row": 15,
+        "to_col": 10,
+        "to_row": 30
+    }
+]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "multi_image_report.xlsx",
+    images=images
+)
+```
+
+### Image Positioning Guide
+
+Images are positioned using Excel's column/row coordinates:
+- **Columns** are 0-indexed: A=0, B=1, C=2, etc.
+- **Rows** are 0-indexed: 0=row 1, 1=row 2, etc.
+
+```python
+# Position image from B3 to F10
+image = {
+    "path": "image.png",
+    "from_col": 1,   # Column B (0-based)
+    "from_row": 2,   # Row 3 (0-based)
+    "to_col": 5,     # Column F
+    "to_row": 9      # Row 10
+}
+```
+
+**Size Recommendations:**
+- **Small**: 2-4 columns × 5-8 rows (logos, icons)
+- **Medium**: 4-6 columns × 8-12 rows (product photos)
+- **Large**: 6-10 columns × 12-20 rows (charts, diagrams)
+
+### Combining Images with Data
+
+Create professional reports with logos, data, and visualizations:
+
+```python
+import polars as pl
+import jetxl as jet
+
+# Sample data
+df = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar", "Apr"],
+    "Revenue": [10000, 12000, 11000, 13000],
+    "Costs": [7000, 8000, 7500, 8500]
+})
+
+# Add company logo, data table, and chart image
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "monthly_report.xlsx",
+    sheet_name="Financial Report",
+    styled_headers=True,
+    freeze_rows=1,
+    column_formats={
+        "Revenue": "currency",
+        "Costs": "currency"
+    },
+    images=[
+        {
+            # Logo at top
+            "path": "company_logo.png",
+            "from_col": 0,
+            "from_row": 0,
+            "to_col": 2,
+            "to_row": 3
+        },
+        {
+            # Visualization chart
+            "path": "revenue_chart.png",
+            "from_col": 5,
+            "from_row": 5,
+            "to_col": 15,
+            "to_row": 25
+        }
+    ]
+)
+```
+
+### Images with Charts and Tables
+
+Combine all visualization features:
+
+```python
+df = pl.DataFrame({
+    "Product": ["A", "B", "C", "D"],
+    "Q1": [100, 150, 120, 180],
+    "Q2": [110, 160, 130, 190],
+    "Q3": [120, 170, 140, 200]
+})
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "complete_dashboard.xlsx",
+    tables=[{
+        "name": "SalesTable",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 4,
+        "end_col": 3,
+        "style": "TableStyleMedium2"
+    }],
+    charts=[{
+        "chart_type": "column",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 4,
+        "end_col": 3,
+        "from_col": 5,
+        "from_row": 5,
+        "to_col": 13,
+        "to_row": 20,
+        "title": "Quarterly Sales"
+    }],
+    images=[{
+        "path": "company_logo.png",
+        "from_col": 0,
+        "from_row": 0,
+        "to_col": 2,
+        "to_row": 3
+    }]
+)
+```
+
+### Images Across Multiple Sheets
+
+Each sheet can have its own images:
+
+```python
+df_summary = pl.DataFrame({"Metric": ["Total Sales"], "Value": [50000]})
+df_details = pl.DataFrame({"Product": ["A", "B"], "Sales": [30000, 20000]})
+
+sheets = [
+    {
+        "data": df_summary.to_arrow(),
+        "name": "Summary",
+        "images": [{
+            "path": "company_logo.png",
+            "from_col": 0,
+            "from_row": 0,
+            "to_col": 2,
+            "to_row": 4
+        }]
+    },
+    {
+        "data": df_details.to_arrow(),
+        "name": "Details",
+        "images": [{
+            "path": "product_breakdown.png",
+            "from_col": 4,
+            "from_row": 1,
+            "to_col": 12,
+            "to_row": 15
+        }]
+    }
+]
+
+jet.write_sheets_arrow(sheets, "multi_sheet_report.xlsx", num_threads=2)
+```
+
+### Working with Generated Images
+
+Combine with image generation libraries:
+
+```python
+import matplotlib.pyplot as plt
+import io
+import jetxl as jet
+
+# Generate a chart with matplotlib
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3, 4], [10, 20, 15, 25])
+ax.set_title("Sales Trend")
+
+# Save to bytes
+img_buffer = io.BytesIO()
+fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
+img_bytes = img_buffer.getvalue()
+plt.close(fig)
+
+# Add to Excel
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "report_with_chart.xlsx",
+    images=[{
+        "data": img_bytes,
+        "extension": "png",
+        "from_col": 5,
+        "from_row": 1,
+        "to_col": 15,
+        "to_row": 20
+    }]
+)
+```
+
+### Image Best Practices
+
+1. **File Formats**
+   - Use PNG for logos and screenshots (lossless, supports transparency)
+   - Use JPEG for photos (smaller file size)
+   - Use GIF for simple animations (limited color palette)
+
+2. **Image Size**
+   - Optimize images before embedding to reduce file size
+   - Use appropriate dimensions for your target (don't embed 4K images for small displays)
+   - Consider using PIL/Pillow to resize images programmatically
+
+3. **Performance**
+   - Large images increase Excel file size
+   - Multiple large images can slow down Excel opening time
+   - Compress images before embedding when possible
+
+4. **Positioning**
+   - Leave space around images for readability
+   - Align images with data columns when possible
+   - Use consistent sizing for professional appearance
+
 ## 🔗 Hyperlinks
 
 ```python
@@ -1384,6 +1704,15 @@ charts = [{
     "show_legend": False
 }]
 
+# Add logo image
+images = [{
+    "path": "company_logo.png",
+    "from_col": 0,
+    "from_row": 0,
+    "to_col": 2,
+    "to_row": 3
+}]
+
 # Write to Excel
 jet.write_sheet_arrow(
     df.to_arrow(),
@@ -1399,7 +1728,8 @@ jet.write_sheet_arrow(
     },
     tables=tables,
     conditional_formats=conditional_formats,
-    charts=charts
+    charts=charts,
+    images=images
 )
 ```
 
@@ -1592,4 +1922,4 @@ except ValueError as e:
 ---
 
 
-Made with <3 and 🦀 by the Jetxl team
+Made with ❤️ and 🦀 by the Jetxl team

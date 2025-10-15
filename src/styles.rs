@@ -264,6 +264,7 @@ pub struct StyleConfig {
     pub cond_format_dxf_ids: HashMap<usize, u32>,
     pub tables: Vec<ExcelTable>,
     pub charts: Vec<ExcelChart>,
+    pub images: Vec<ExcelImage>,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +294,7 @@ impl Default for StyleConfig {
             cond_format_dxf_ids: HashMap::new(),
             tables: Vec::new(),
             charts: Vec::new(),
+            images: Vec::new()
         }
     }
 }
@@ -782,6 +784,52 @@ pub struct ExcelChart {
     pub x_axis_title: Option<String>,
     pub y_axis_title: Option<String>, 
 }
+
+#[derive(Debug, Clone)]
+pub struct ExcelImage {
+    pub image_data: Vec<u8>,
+    pub extension: String, // "png", "jpeg", etc.
+    pub position: ImagePosition,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImagePosition {
+    pub from_col: usize,
+    pub from_row: usize,
+    pub to_col: usize,
+    pub to_row: usize,
+}
+
+impl ExcelImage {
+    pub fn from_path(path: &str, position: ImagePosition) -> Result<Self, std::io::Error> {
+        let data = std::fs::read(path)?;
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png")
+            .to_lowercase();
+        
+        Ok(Self {
+            image_data: data,
+            extension: ext,
+            position,
+            description: None,
+        })
+    }
+
+    pub fn from_bytes(data: Vec<u8>, extension: String, position: ImagePosition) -> Self {
+        Self {
+            image_data: data,
+            extension,
+            position,
+            description: None,
+        }
+    }
+}
+
+
+
 
 #[derive(Debug, Clone)]
 pub enum ChartType {

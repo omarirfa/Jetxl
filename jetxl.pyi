@@ -37,7 +37,7 @@ Advanced Usage:
     ... )
 """
 
-from typing import Any, Optional, Literal, TypedDict, List, Dict, Tuple
+from typing import Any, Optional, Literal, TypedDict, List, Dict, Tuple, Union
 
 # =============================================================================
 # NUMBER FORMATS
@@ -895,6 +895,133 @@ class ExcelChart(TypedDict, total=False):
     y_axis_title: str                   # Optional: Y-axis label
 
 # =============================================================================
+# EXCEL IMAGES
+# =============================================================================
+
+class ImagePosition(TypedDict):
+    """Image position on the worksheet.
+    
+    Images are positioned using Excel's column/row coordinates:
+    - Columns are 0-indexed: A=0, B=1, C=2, etc.
+    - Rows are 0-indexed for position: 0=row 1, 1=row 2, etc.
+    
+    Attributes:
+        from_col: Starting column (0-based)
+        from_row: Starting row (0-based)
+        to_col: Ending column (0-based)
+        to_row: Ending row (0-based)
+    
+    Size Recommendations:
+        - Small: 2-4 columns × 5-8 rows
+        - Medium: 4-6 columns × 8-12 rows
+        - Large: 6-10 columns × 12-20 rows
+    
+    Example - Position image from B3 to E10:
+        >>> position = {
+        ...     "from_col": 1,   # Column B (0-based)
+        ...     "from_row": 2,   # Row 3 (0-based)
+        ...     "to_col": 4,     # Column E
+        ...     "to_row": 9      # Row 10
+        ... }
+    """
+    from_col: int
+    from_row: int
+    to_col: int
+    to_row: int
+
+class ExcelImageFromPath(TypedDict):
+    """Excel image loaded from a file path.
+    
+    This is the recommended method for adding images as it's simpler
+    and automatically detects the image format from the file extension.
+    
+    Attributes:
+        path: File path to the image (required)
+        from_col: Starting column (required, 0-based)
+        from_row: Starting row (required, 0-based)
+        to_col: Ending column (required, 0-based)
+        to_row: Ending row (required, 0-based)
+    
+    Supported Formats:
+        - PNG (.png)
+        - JPEG (.jpg, .jpeg)
+        - GIF (.gif)
+        - BMP (.bmp)
+        - TIFF (.tiff, .tif)
+    
+    Example - Add logo from file:
+        >>> image = {
+        ...     "path": "company_logo.png",
+        ...     "from_col": 0,   # Column A
+        ...     "from_row": 0,   # Row 1
+        ...     "to_col": 2,     # Column C
+        ...     "to_row": 5      # Row 6
+        ... }
+    """
+    path: str           # Required: file path
+    from_col: int       # Required: 0-based column
+    from_row: int       # Required: 0-based row
+    to_col: int         # Required: 0-based column
+    to_row: int         # Required: 0-based row
+
+class ExcelImageFromBytes(TypedDict):
+    """Excel image from raw image data bytes.
+    
+    Use this method when you have image data in memory (e.g., from
+    an API response, database, or generated programmatically).
+    
+    Attributes:
+        data: Raw image bytes (required)
+        extension: Image format extension (required)
+        from_col: Starting column (required, 0-based)
+        from_row: Starting row (required, 0-based)
+        to_col: Ending column (required, 0-based)
+        to_row: Ending row (required, 0-based)
+    
+    Supported Extensions:
+        - "png"
+        - "jpg" or "jpeg"
+        - "gif"
+        - "bmp"
+        - "tiff" or "tif"
+    
+    Example - Add image from bytes:
+        >>> import requests
+        >>> response = requests.get("https://example.com/image.png")
+        >>> image_bytes = response.content
+        >>> 
+        >>> image = {
+        ...     "data": image_bytes,
+        ...     "extension": "png",
+        ...     "from_col": 5,
+        ...     "from_row": 2,
+        ...     "to_col": 8,
+        ...     "to_row": 10
+        ... }
+    
+    Example - Read from file manually:
+        >>> with open("logo.png", "rb") as f:
+        ...     image_data = f.read()
+        >>> 
+        >>> image = {
+        ...     "data": image_data,
+        ...     "extension": "png",
+        ...     "from_col": 0,
+        ...     "from_row": 0,
+        ...     "to_col": 3,
+        ...     "to_row": 6
+        ... }
+    """
+    data: bytes         # Required: raw image bytes
+    extension: str      # Required: image format (png, jpg, gif, etc.)
+    from_col: int       # Required: 0-based column
+    from_row: int       # Required: 0-based row
+    to_col: int         # Required: 0-based column
+    to_row: int         # Required: 0-based row
+
+ExcelImage = Union[ExcelImageFromPath, ExcelImageFromBytes]
+
+# =============================================================================
 # MAIN FUNCTIONS
 # =============================================================================
 
@@ -918,6 +1045,7 @@ def write_sheet_arrow(
     conditional_formats: Optional[List[ConditionalFormat]] = None,
     tables: Optional[List[ExcelTable]] = None,
     charts: Optional[List[ExcelChart]] = None,
+    images: Optional[List[ExcelImage]] = None,
 ) -> None:
     """Write Arrow data to Excel with advanced formatting.
     
@@ -949,6 +1077,7 @@ def write_sheet_arrow(
         conditional_formats: Conditional formatting rules (color scales, data bars, etc.)
         tables: Excel table definitions with filtering and styling
         charts: Excel chart definitions (column, bar, line, pie, scatter, area)
+        images: Excel image definitions (from file path or bytes)
     
     Examples:
         Basic Usage (Polars):
@@ -1113,6 +1242,77 @@ def write_sheet_arrow(
             ...     }]
             ... )
         
+        With Image from File:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "report.xlsx",
+            ...     images=[{
+            ...         "path": "logo.png",
+            ...         "from_col": 0,
+            ...         "from_row": 0,
+            ...         "to_col": 3,
+            ...         "to_row": 5
+            ...     }]
+            ... )
+        
+        With Image from Bytes:
+            >>> import requests
+            >>> response = requests.get("https://example.com/chart.png")
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "report.xlsx",
+            ...     images=[{
+            ...         "data": response.content,
+            ...         "extension": "png",
+            ...         "from_col": 5,
+            ...         "from_row": 1,
+            ...         "to_col": 12,
+            ...         "to_row": 15
+            ...     }]
+            ... )
+        
+        Multiple Images:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "dashboard.xlsx",
+            ...     images=[
+            ...         {
+            ...             "path": "logo.png",
+            ...             "from_col": 0,
+            ...             "from_row": 0,
+            ...             "to_col": 2,
+            ...             "to_row": 4
+            ...         },
+            ...         {
+            ...             "path": "chart.png",
+            ...             "from_col": 8,
+            ...             "from_row": 1,
+            ...             "to_col": 15,
+            ...             "to_row": 20
+            ...         }
+            ...     ]
+            ... )
+        
+        Images with Charts:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "visual_report.xlsx",
+            ...     charts=[{
+            ...         "chart_type": "column",
+            ...         "start_row": 1, "start_col": 0,
+            ...         "end_row": 10, "end_col": 2,
+            ...         "from_col": 4, "from_row": 1,
+            ...         "to_col": 12, "to_row": 15,
+            ...         "title": "Sales Chart"
+            ...     }],
+            ...     images=[{
+            ...         "path": "company_logo.png",
+            ...         "from_col": 0,
+            ...         "from_row": 0,
+            ...         "to_col": 2,
+            ...         "to_row": 4
+            ...     }]
+            ... )
         Complete Example:
             >>> import polars as pl
             >>> import jetxl
@@ -1165,13 +1365,15 @@ def write_sheet_arrow(
             ... )
     
     Raises:
-        IOError: If file cannot be written
+        IOError: If file cannot be written or image cannot be read
         ValueError: If arrow_data is empty or invalid
     
     Notes:
         - Row numbers are 1-based (row 1 is the first row)
         - Column numbers are 0-based (column 0 is 'A')
         - Colors use ARGB hex format: "AARRGGBB"
+        - Images are embedded in the Excel file
+        - Supported image formats: PNG, JPEG, GIF, BMP, TIFF
         - Performance: 10-100x faster than openpyxl/xlsxwriter
         - Memory: Minimal overhead with streaming XML generation
     """
@@ -1206,15 +1408,38 @@ def write_sheets_arrow(
             - conditional_formats: Conditional formatting (optional)
             - tables: Excel tables (optional)
             - charts: Charts (optional)
+            - images: Images (optional)
         filename: Output Excel file path (.xlsx)
         num_threads: Number of parallel threads for XML generation
     
-    Performance:
-        - num_threads=1: Sequential generation
-        - num_threads=2-4: Optimal for 2-8 sheets
-        - num_threads=4-8: Optimal for 8+ sheets
-    
     Examples:
+        Multi-Sheet with Images:
+            >>> sheets = [
+            ...     {
+            ...         "data": df_sales.to_arrow(),
+            ...         "name": "Sales",
+            ...         "images": [{
+            ...             "path": "sales_chart.png",
+            ...             "from_col": 5,
+            ...             "from_row": 1,
+            ...             "to_col": 12,
+            ...             "to_row": 15
+            ...         }]
+            ...     },
+            ...     {
+            ...         "data": df_costs.to_arrow(),
+            ...         "name": "Costs",
+            ...         "images": [{
+            ...             "path": "cost_breakdown.png",
+            ...             "from_col": 4,
+            ...             "from_row": 2,
+            ...             "to_col": 10,
+            ...             "to_row": 18
+            ...         }]
+            ...     }
+            ... ]
+            >>> jetxl.write_sheets_arrow(sheets, "report.xlsx", num_threads=2)
+        
         Basic Multi-Sheet:
             >>> import polars as pl
             >>> import jetxl
@@ -1344,10 +1569,11 @@ def write_sheets_arrow(
         ValueError: If any sheet data is invalid
     
     Notes:
-        - Each sheet can have independent formatting
-        - Parallel processing significantly speeds up multi-sheet files
-        - All sheets share the same workbook-level styles
+        - Each sheet can have independent images, charts, and formatting
+        - Images are embedded in the workbook
         - Thread count doesn't need to match sheet count
+        - All sheets share the same workbook-level styles
+        - Parallel processing significantly speeds up multi-sheet files
     """
     ...
 
@@ -1432,6 +1658,8 @@ def write_sheet(
         TypeError: If unsupported value types are provided
     
     Notes:
+        - Images are not supported in the legacy dict API
+        - Use write_sheet_arrow() for image support
         - All column lists must have the same length
         - Sheet names limited to 31 characters
         - Invalid characters in sheet names: [ ] : * ? / \\
@@ -1507,6 +1735,8 @@ def write_sheets(
         KeyError: If required keys are missing
     
     Notes:
+        - Images are not supported in the legacy dict API
+        - Use write_sheets_arrow() for image support
         - Each sheet dict must have "name" and "columns" keys
         - All columns in a sheet must have the same length
         - For better performance, use write_sheets_arrow() instead

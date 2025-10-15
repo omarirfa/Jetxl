@@ -27,6 +27,7 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 rayon = "1.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
 
 [profile.release]
 opt-level = 3
