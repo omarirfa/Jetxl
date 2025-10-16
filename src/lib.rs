@@ -109,6 +109,13 @@ fn write_sheets(
     tables = None, 
     charts = None,
     images = None,
+    gridlines_visible = true,
+    zoom_scale = None,
+    tab_color = None,
+    default_row_height = None,
+    hidden_columns = None,
+    hidden_rows = None,
+    right_to_left = false,
 ))]
 
 /// Write Arrow data to an Excel file with advanced formatting options.
@@ -122,6 +129,7 @@ fn write_sheets(
 ///     freeze_cols (int): Number of columns to freeze
 ///     auto_width (bool): Auto-calculate column widths
 ///     styled_headers (bool): Apply bold+gray style to headers
+///     write_header_row (bool): Write header row with column names
 ///     column_widths (dict[str, float], optional): Manual column widths by name
 ///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
 ///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
@@ -132,7 +140,15 @@ fn write_sheets(
 ///     formulas (list[tuple], optional): List of (row, col, formula, cached_value)
 ///     conditional_formats (list[dict], optional): Conditional formatting rules
 ///     tables (list[dict], optional): Excel table definitions
-
+///     charts (list[dict], optional): Chart definitions
+///     images (list[dict], optional): Image definitions
+///     gridlines_visible (bool): Show gridlines (default: True)
+///     zoom_scale (int, optional): Zoom level 10-400%
+///     tab_color (str, optional): Sheet tab color in RGB format (e.g., "FFFF0000")
+///     default_row_height (float, optional): Default row height for all rows
+///     hidden_columns (list[int], optional): Column indices to hide
+///     hidden_rows (list[int], optional): Row indices to hide
+///     right_to_left (bool): Enable right-to-left layout (default: False)
 #[allow(clippy::too_many_arguments)]
 fn write_sheet_arrow(
     py: Python,
@@ -157,6 +173,13 @@ fn write_sheet_arrow(
     tables: Option<Vec<Bound<PyDict>>>,
     charts: Option<Vec<Bound<PyDict>>>,
     images: Option<Vec<Bound<PyDict>>>,
+    gridlines_visible: bool,
+    zoom_scale: Option<u16>,
+    tab_color: Option<String>,
+    default_row_height: Option<f64>,
+    hidden_columns: Option<Vec<usize>>,
+    hidden_rows: Option<Vec<usize>>,
+    right_to_left: bool,
 ) -> PyResult<()> {
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
@@ -204,6 +227,13 @@ fn write_sheet_arrow(
         tables: Vec::new(), 
         charts: Vec::new(),
         images: Vec::new(),
+        gridlines_visible,
+        zoom_scale,
+        tab_color,
+        default_row_height,
+        hidden_columns: hidden_columns.unwrap_or_default(),
+        hidden_rows: hidden_rows.unwrap_or_default(),
+        right_to_left,
     };
 
     // Parse data validations
@@ -267,15 +297,6 @@ fn write_sheet_arrow(
         }
     }
 
-//     // Build DXF IDs for conditional formats
-//     if !config.conditional_formats.is_empty() {
-//         let mut temp_registry = StyleRegistry::new();
-//         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-//             let dxf_id = temp_registry.register_dxf(&cond_format.style);
-//             config.cond_format_dxf_ids.insert(idx, dxf_id);
-//     }
-// }
-
     py.detach(|| {
         writer::write_single_sheet_arrow_with_config(&batches, &name, &filename, &config)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
@@ -287,7 +308,7 @@ fn write_sheet_arrow(
 /// Write multiple Arrow tables to Excel with parallel processing.
 ///
 /// Args:
-///     arrow_sheets (list[tuple]): List of (arrow_data, sheet_name) tuples
+///     arrow_sheets (list[dict]): List of dicts with keys: data, name, and optional formatting params
 ///     filename (str): Output file path
 ///     num_threads (int): Number of parallel threads for XML generation
 fn write_sheets_arrow(
@@ -340,8 +361,7 @@ fn write_sheets_arrow(
             config.column_formats = Some(col_fmts);
         }
 
-
-
+        // Charts
         if let Some(charts_vec) = sheet_dict.get_item("charts")? {
             let charts_list = charts_vec.downcast::<pyo3::types::PyList>()?;
             for chart_dict in charts_list.iter() {
@@ -353,7 +373,7 @@ fn write_sheets_arrow(
             }
         }
 
-        // images
+        // Images
         if let Some(images_vec) = sheet_dict.get_item("images")? {
             let images_list = images_vec.downcast::<pyo3::types::PyList>()?;
             for image_dict in images_list.iter() {
@@ -363,6 +383,29 @@ fn write_sheets_arrow(
                     }
                 }
             }
+        }
+        
+        // additions
+        if let Some(val) = sheet_dict.get_item("gridlines_visible")?.and_then(|v| v.extract().ok()) {
+            config.gridlines_visible = val;
+        }
+        if let Some(val) = sheet_dict.get_item("zoom_scale")?.and_then(|v| v.extract().ok()) {
+            config.zoom_scale = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("tab_color")?.and_then(|v| v.extract().ok()) {
+            config.tab_color = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("default_row_height")?.and_then(|v| v.extract().ok()) {
+            config.default_row_height = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("hidden_columns")?.and_then(|v| v.extract().ok()) {
+            config.hidden_columns = val;
+        }
+        if let Some(val) = sheet_dict.get_item("hidden_rows")?.and_then(|v| v.extract().ok()) {
+            config.hidden_rows = val;
+        }
+        if let Some(val) = sheet_dict.get_item("right_to_left")?.and_then(|v| v.extract().ok()) {
+            config.right_to_left = val;
         }
         
         sheets_data.push((batches, name, config));

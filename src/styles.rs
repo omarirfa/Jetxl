@@ -266,6 +266,13 @@ pub struct StyleConfig {
     pub tables: Vec<ExcelTable>,
     pub charts: Vec<ExcelChart>,
     pub images: Vec<ExcelImage>,
+    pub gridlines_visible: bool,
+    pub zoom_scale: Option<u16>, // 10-400
+    pub tab_color: Option<String>, // RGB like "FFFF0000"
+    pub default_row_height: Option<f64>,
+    pub hidden_columns: Vec<usize>,
+    pub hidden_rows: Vec<usize>,
+    pub right_to_left: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +303,14 @@ impl Default for StyleConfig {
             cond_format_dxf_ids: HashMap::new(),
             tables: Vec::new(),
             charts: Vec::new(),
-            images: Vec::new()
+            images: Vec::new(),
+            gridlines_visible: true,
+            zoom_scale: None,
+            tab_color: None,
+            default_row_height: None,
+            hidden_columns: Vec::new(),
+            hidden_rows: Vec::new(),
+            right_to_left: false,
         }
     }
 }

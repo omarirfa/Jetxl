@@ -249,11 +249,13 @@ pub fn generate_content_types_with_charts(
         }
     }
     
-    for (i, &(_, drawing_count)) in images_per_sheet.iter().enumerate() {
+    let mut drawing_id = 1;
+    for &(_, drawing_count) in images_per_sheet {
         if drawing_count > 0 {
             xml.push_str("<Override PartName=\"/xl/drawings/drawing");
-            xml.push_str(&(i + 1).to_string());
+            xml.push_str(&drawing_id.to_string()); // Use drawing_id, not sheet index
             xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>");
+            drawing_id += 1;
         }
     }
 
@@ -1206,6 +1208,13 @@ pub fn generate_sheet_xml_from_arrow(
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
 
+    // SheetPr (tab color - must come before dimension)
+    if let Some(ref color) = config.tab_color {
+        buf.extend_from_slice(b"<sheetPr><tabColor rgb=\"");
+        buf.extend_from_slice(color.as_bytes());
+        buf.extend_from_slice(b"\"/></sheetPr>");
+    }
+
     // Dimension
     buf.extend_from_slice(b"<dimension ref=\"");
     if total_rows > 0 {
@@ -1221,8 +1230,26 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"\"/>");
 
-    // SheetViews (with optional freeze panes)
+    // SheetViews (with gridlines, zoom, RTL, and optional freeze panes)
     buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
+    
+    // Add showGridLines if disabled
+    if !config.gridlines_visible {
+        buf.extend_from_slice(b" showGridLines=\"0\"");
+    }
+    
+    // Add zoom scale
+    if let Some(zoom) = config.zoom_scale {
+        buf.extend_from_slice(b" zoomScale=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(zoom).as_bytes());
+        buf.push(b'\"');
+    }
+    
+    // Add right-to-left
+    if config.right_to_left {
+        buf.extend_from_slice(b" rightToLeft=\"1\"");
+    }
+    
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
         buf.push(b'>');
         buf.extend_from_slice(b"<pane ");
@@ -1247,13 +1274,18 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"/></sheetViews>");
     }
 
-    // SheetFormatPr (optional custom row heights)
-    if config.row_heights.is_some() {
-        buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"15\"/>");
+    // SheetFormatPr (default row height)
+    buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"");
+    let default_height = config.default_row_height.unwrap_or(15.0);
+    buf.extend_from_slice(ryu::Buffer::new().format(default_height).as_bytes());
+    buf.push(b'\"');
+    if config.default_row_height.is_some() {
+        buf.extend_from_slice(b" customHeight=\"1\"");
     }
+    buf.extend_from_slice(b"/>");
 
-    // Cols (column widths)
-    if config.auto_width || config.column_widths.is_some() {
+    // Cols (column widths and hidden columns)
+    if config.auto_width || config.column_widths.is_some() || !config.hidden_columns.is_empty() {
         buf.extend_from_slice(b"<cols>");
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
@@ -1277,7 +1309,14 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(itoa::Buffer::new().format(col_idx + 1).as_bytes());
             buf.extend_from_slice(b"\" width=\"");
             buf.extend_from_slice(ryu::Buffer::new().format(width).as_bytes());
-            buf.extend_from_slice(b"\" customWidth=\"1\"/>");
+            buf.extend_from_slice(b"\" customWidth=\"1\"");
+            
+            // Hidden column
+            if config.hidden_columns.contains(&col_idx) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.extend_from_slice(b"/>");
         }
         
         buf.extend_from_slice(b"</cols>");
@@ -1319,7 +1358,11 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
             buf.extend_from_slice(b"\" customHeight=\"1\"");
         }
-        buf.extend_from_slice(b">");
+        // Hidden row check for header
+        if config.hidden_rows.contains(&1) {
+            buf.extend_from_slice(b" hidden=\"1\"");
+        }
+        buf.push(b'>');
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let (col_letter, col_len) = &col_letters[col_idx];
@@ -1355,7 +1398,7 @@ pub fn generate_sheet_xml_from_arrow(
                 
                 buf.extend_from_slice(b"<row r=\"");
                 buf.extend_from_slice(row_bytes);
-                buf.extend_from_slice(b"\"");
+                buf.push(b'\"');
                 
                 if let Some(heights) = &config.row_heights {
                     if let Some(height) = heights.get(&current_row) {
@@ -1365,7 +1408,12 @@ pub fn generate_sheet_xml_from_arrow(
                     }
                 }
                 
-                buf.extend_from_slice(b">");
+                // Hidden row check for table header
+                if config.hidden_rows.contains(&current_row) {
+                    buf.extend_from_slice(b" hidden=\"1\"");
+                }
+                
+                buf.push(b'>');
                 
                 // Write header cells for table columns
                 for col_idx in start_col..=end_col {
@@ -1402,7 +1450,7 @@ pub fn generate_sheet_xml_from_arrow(
 
             buf.extend_from_slice(b"<row r=\"");
             buf.extend_from_slice(row_bytes);
-            buf.extend_from_slice(b"\"");
+            buf.push(b'\"');
             
             if let Some(heights) = &config.row_heights {
                 if let Some(height) = heights.get(&row_num) {
@@ -1412,7 +1460,12 @@ pub fn generate_sheet_xml_from_arrow(
                 }
             }
             
-            buf.extend_from_slice(b">");
+            // Hidden row check
+            if config.hidden_rows.contains(&row_num) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.push(b'>');
 
             for col_idx in 0..num_cols {
                 let array = batch.column(col_idx);
@@ -1452,8 +1505,13 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
+    // AutoFilter - only if no table covers the entire range from A1
+    let has_full_table = config.tables.iter().any(|t| {
+        let (start_row, start_col, end_row, end_col) = t.range;
+        start_row == 1 && start_col == 0 && end_row >= total_rows && end_col >= num_cols - 1
+    });
     // AutoFilter
-    if config.auto_filter && total_rows > 0 {
+    if config.auto_filter && total_rows > 0 && !has_full_table {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
         let mut col_buf = [0u8; 4];
         let col_len = write_col_letter(num_cols - 1, &mut col_buf);
