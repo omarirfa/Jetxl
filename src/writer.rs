@@ -220,10 +220,10 @@ pub fn write_single_sheet_arrow_with_config(
     let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map, &cell_style_map)?;
     
     // DEBUG: Check for leading garbage
-    if xml_data.len() > 0 {
-        eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
-        eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
-    }
+    // if xml_data.len() > 0 {
+    //     eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
+    //     eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
+    // }
 
     
     zipper

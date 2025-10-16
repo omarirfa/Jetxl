@@ -1290,15 +1290,24 @@ pub fn generate_sheet_xml_from_arrow(
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let width = if let Some(widths) = &config.column_widths {
-                widths.get(field.name()).copied().unwrap_or_else(|| {
-                    if config.auto_width && !batches.is_empty() {
-                        calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                             field.name(), 100)
-                    } else { 8.43 }
-                })
-            } else if config.auto_width && !batches.is_empty() {
-                calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                     field.name(), 100)
+                if let Some(col_width) = widths.get(field.name()) {
+                    match col_width {
+                        ColumnWidth::Characters(w) => *w,
+                        ColumnWidth::Pixels(px) => px / 7.0,  // Calibri 11pt MDW
+                        ColumnWidth::Auto => calculate_column_width(
+                            batches[0].column(col_idx).as_ref(),
+                            field.name(), 100, config.data_start_row
+                        ),
+                    }
+                } else if config.auto_width {
+                    calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                        field.name(), 100, config.data_start_row)
+                } else {
+                    8.43
+                }
+            } else if config.auto_width {
+                calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                    field.name(), 100, config.data_start_row)
             } else {
                 8.43
             };
@@ -1823,6 +1832,11 @@ fn write_arrow_cell_to_xml_optimized(
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
             
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
+
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
             if let Some(sid) = style_id {
@@ -1841,6 +1855,11 @@ fn write_arrow_cell_to_xml_optimized(
             let start = offsets[row_idx] as usize;
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
+
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
             
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
@@ -1912,14 +1931,14 @@ fn write_arrow_cell_to_xml_optimized(
                 .checked_add_signed(chrono::Duration::days(days as i64))
                 .ok_or_else(|| WriteError::Validation("Date out of range".to_string()))?;
             let dt = date.and_hms_opt(0, 0, 0).unwrap();
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(10)), buf, ryu_buf);
         }
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             let millis = arr.value(row_idx);
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
-            write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&datetime.naive_utc(), cell_ref, style_id.or(Some(10)), buf, ryu_buf); // Date-only format
         }
        DataType::Time32(unit) => {
             use arrow_schema::TimeUnit;
@@ -1934,8 +1953,8 @@ fn write_arrow_cell_to_xml_optimized(
                 }
                 _ => 0.0,
             };
-            // let time_fraction = seconds / 86400.0;
-            // write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
+            let time_fraction = seconds / 86400.0;
+            write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
         }
         DataType::Time64(unit) => {
             use arrow_schema::TimeUnit;
@@ -1987,7 +2006,7 @@ fn write_arrow_cell_to_xml_optimized(
                         .naive_utc()
                 }
             };
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(1)), buf, ryu_buf);
         }
         _ => {
             buf.extend_from_slice(b"<c r=\"");
@@ -2031,6 +2050,19 @@ fn write_number_cell(
     ryu_buf: &mut ryu::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
+
+    // Excel can't handle NaN or inf - write empty cell instead
+    if !n.is_finite() {
+        buf.extend_from_slice(b"<c r=\"");
+        buf.extend_from_slice(cell_ref);
+        if let Some(sid) = style_id {
+            buf.extend_from_slice(b"\" s=\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+        }
+        buf.extend_from_slice(b"\"/>");
+        return;
+    }
+
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     if let Some(sid) = style_id {

@@ -116,8 +116,8 @@ fn write_sheets(
     hidden_columns = None,
     hidden_rows = None,
     right_to_left = false,
+    data_start_row = 0,
 ))]
-
 /// Write Arrow data to an Excel file with advanced formatting options.
 /// 
 /// Args:
@@ -130,6 +130,10 @@ fn write_sheets(
 ///     auto_width (bool): Auto-calculate column widths
 ///     styled_headers (bool): Apply bold+gray style to headers
 ///     write_header_row (bool): Write header row with column names
+///     column_widths (dict[str, str|float], optional): Column widths - accepts:
+///         - float/int: Excel character units (e.g., 15.5)
+///         - "150px": Pixel width (converted to characters)
+///         - "auto": Auto-calculate from data
 ///     column_widths (dict[str, float], optional): Manual column widths by name
 ///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
 ///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
@@ -149,6 +153,7 @@ fn write_sheets(
 ///     hidden_columns (list[int], optional): Column indices to hide
 ///     hidden_rows (list[int], optional): Row indices to hide
 ///     right_to_left (bool): Enable right-to-left layout (default: False)
+///     data_start_row (int): Skip this many rows when calculating auto_width (for dummy rows)
 #[allow(clippy::too_many_arguments)]
 fn write_sheet_arrow(
     py: Python,
@@ -161,7 +166,7 @@ fn write_sheet_arrow(
     auto_width: bool,
     styled_headers: bool,
     write_header_row: bool,
-    column_widths: Option<HashMap<String, f64>>,
+    column_widths: Option<HashMap<String, Bound<PyAny>>>,
     column_formats: Option<HashMap<String, String>>,
     merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
     data_validations: Option<Vec<Bound<PyDict>>>,
@@ -180,7 +185,9 @@ fn write_sheet_arrow(
     hidden_columns: Option<Vec<usize>>,
     hidden_rows: Option<Vec<usize>>,
     right_to_left: bool,
+    data_start_row: usize,
 ) -> PyResult<()> {
+    // Convert PyArrow data to RecordBatch
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
     
@@ -198,6 +205,32 @@ fn write_sheet_arrow(
 
     let name = sheet_name.unwrap_or_else(|| "Sheet1".to_string());
 
+    // Parse column_widths - supports float, "auto", or "150px"
+    let parsed_column_widths = column_widths.map(|cw| {
+        cw.into_iter()
+            .filter_map(|(k, v)| {
+                let width = if let Ok(s) = v.extract::<String>() {
+                    if s.to_lowercase() == "auto" {
+                        ColumnWidth::Auto
+                    } else if s.ends_with("px") {
+                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                        ColumnWidth::Pixels(px)
+                    } else {
+                        // Try parsing as number string
+                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                    }
+                } else if let Ok(f) = v.extract::<f64>() {
+                    ColumnWidth::Characters(f)
+                } else if let Ok(i) = v.extract::<i64>() {
+                    ColumnWidth::Characters(i as f64)
+                } else {
+                    return None;
+                };
+                Some((k, width))
+            })
+            .collect()
+    });
+
     // Build config
     let mut config = StyleConfig {
         auto_filter,
@@ -205,7 +238,7 @@ fn write_sheet_arrow(
         freeze_cols,
         styled_headers,
         write_header_row,
-        column_widths,
+        column_widths: parsed_column_widths,
         auto_width,
         column_formats: column_formats.map(|cf| {
             cf.into_iter()
@@ -234,6 +267,7 @@ fn write_sheet_arrow(
         hidden_columns: hidden_columns.unwrap_or_default(),
         hidden_rows: hidden_rows.unwrap_or_default(),
         right_to_left,
+        data_start_row,
     };
 
     // Parse data validations
@@ -279,7 +313,7 @@ fn write_sheet_arrow(
         }
     }
 
-    // Charts
+    // Parse charts
     if let Some(charts_vec) = charts {
         for chart_dict in charts_vec {
             if let Ok(chart) = extract_chart(&chart_dict) {
@@ -288,7 +322,7 @@ fn write_sheet_arrow(
         }
     }
 
-    // Images
+    // Parse images
     if let Some(images_vec) = images {
         for image_dict in images_vec {
             if let Ok(image) = extract_image(&image_dict) {
