@@ -720,6 +720,10 @@ class ExcelTable(TypedDict, total=False):
         show_last_column: Bold last column (optional, default: False)
         show_row_stripes: Alternating row colors (optional, default: True)
         show_column_stripes: Alternating column colors (optional, default: False)
+        show_header_row: Show header row with filter dropdowns (optional, default: True)
+        show_totals_row: Add totals row at bottom (optional, default: False)
+        column_names: Custom column names (optional, auto-detected from data if not provided)
+        
     
     Available Table Styles:
         Light Styles: TableStyleLight1 through TableStyleLight21
@@ -757,8 +761,22 @@ class ExcelTable(TypedDict, total=False):
         ...     "show_row_stripes": True,
         ...     "show_column_stripes": False
         ... }
+    Example - Table with Totals:
+        >>> table = {
+        ...     "name": "SalesData",
+        ...     "start_row": 1,
+        ...     "start_col": 0,
+        ...     "end_row": 100,
+        ...     "end_col": 3,
+        ...     "style": "TableStyleMedium2",
+        ...     "show_header_row": True,
+        ...     "show_totals_row": True,  # Add totals row
+        ...     "show_row_stripes": True
+        ... }
+
+
     """
-    name: str                    # Required: unique table identifier
+    name: str                   # Required: unique table identifier
     start_row: int              # Required: 1-based row
     start_col: int              # Required: 0-based column
     end_row: int                # Required: 1-based row
@@ -769,6 +787,9 @@ class ExcelTable(TypedDict, total=False):
     show_last_column: bool      # Optional: bold last column
     show_row_stripes: bool      # Optional: alternating rows
     show_column_stripes: bool   # Optional: alternating columns
+    show_header_row: bool       # Optional: show header row with filters (default: True)
+    show_totals_row: bool       # Optional: add totals row at bottom (default: False)
+    column_names: List[str]     # Optional: custom column names (auto-detected if not provided)
 
 # =============================================================================
 # EXCEL CHARTS
@@ -830,7 +851,7 @@ class ExcelChart(TypedDict, total=False):
         category_col: Column for X-axis labels (optional, 0-based)
         series_names: Custom names for data series (optional)
         show_legend: Show legend (optional, default: True)
-        legend_position: Legend placement (optional, default: "right")
+        legend_position: Literal["right", "left", "top", "bottom", "none"]
         x_axis_title: X-axis label (optional)
         y_axis_title: Y-axis label (optional)
     
@@ -1035,7 +1056,7 @@ def write_sheet_arrow(
     auto_width: bool = False,
     styled_headers: bool = False,
     write_header_row: bool = True,
-    column_widths: Optional[Dict[str, float]] = None,
+    column_widths: Optional[Dict[str, Union[float, str]]] = None,
     column_formats: Optional[Dict[str, str]] = None,
     merge_cells: Optional[List[Tuple[int, int, int, int]]] = None,
     data_validations: Optional[List[DataValidation]] = None,
@@ -1047,6 +1068,14 @@ def write_sheet_arrow(
     tables: Optional[List[ExcelTable]] = None,
     charts: Optional[List[ExcelChart]] = None,
     images: Optional[List[ExcelImage]] = None,
+    gridlines_visible: bool = True,              
+    zoom_scale: Optional[int] = None,            
+    tab_color: Optional[str] = None,             
+    default_row_height: Optional[float] = None,  
+    hidden_columns: Optional[List[int]] = None,  
+    hidden_rows: Optional[List[int]] = None,     
+    right_to_left: bool = False,                 
+    data_start_row: int = 0,                     
 ) -> None:
     """Write Arrow data to Excel with advanced formatting.
     
@@ -1080,6 +1109,14 @@ def write_sheet_arrow(
         tables: Excel table definitions with filtering and styling
         charts: Excel chart definitions (column, bar, line, pie, scatter, area)
         images: Excel image definitions (from file path or bytes)
+        gridlines_visible: Show worksheet gridlines (default: True)
+        zoom_scale: Zoom percentage 10-400 (default: 100)
+        tab_color: Sheet tab color in ARGB hex format (e.g., "FFFF0000" for red)
+        default_row_height: Default height for all rows in points
+        hidden_columns: List of column indices to hide (0-based)
+        hidden_rows: List of row indices to hide (1-based)
+        right_to_left: Enable right-to-left worksheet layout
+        data_start_row: Skip this many rows when auto-calculating column widths
     
     Examples:
         Basic Usage (Polars):
@@ -1322,6 +1359,38 @@ def write_sheet_arrow(
             ...         "to_row": 4
             ...     }]
             ... )
+        Sheet Appearance:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "styled_sheet.xlsx",
+            ...     gridlines_visible=False,
+            ...     zoom_scale=150,
+            ...     tab_color="FF4472C4",  # Blue tab
+            ...     default_row_height=18.0
+            ... )
+        
+        Hidden Rows/Columns:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "hidden.xlsx",
+            ...     hidden_columns=[2, 3],  # Hide columns C and D
+            ...     hidden_rows=[5, 6, 7]   # Hide rows 5, 6, 7
+            ... )
+        
+        Right-to-Left Layout:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "rtl.xlsx",
+            ...     right_to_left=True  # For Hebrew, Arabic, etc.
+            ... )
+        
+        Auto-Width with Dummy Rows:
+            >>> jetxl.write_sheet_arrow(
+            ...     df.to_arrow(),
+            ...     "report.xlsx",
+            ...     auto_width=True,
+            ...     data_start_row=5  # Skip first 5 rows in width calculation
+            ... )
         Complete Example:
             >>> import polars as pl
             >>> import jetxl
@@ -1418,6 +1487,13 @@ def write_sheets_arrow(
             - tables: Excel tables (optional)
             - charts: Charts (optional)
             - images: Images (optional)
+            - gridlines_visible: Show gridlines (optional)
+            - zoom_scale: Zoom percentage 10-400 (optional)
+            - tab_color: Sheet tab color in ARGB hex (optional)
+            - default_row_height: Default row height (optional)
+            - hidden_columns: Column indices to hide (optional)
+            - hidden_rows: Row indices to hide (optional)
+            - right_to_left: RTL layout (optional)
         filename: Output Excel file path (.xlsx)
         num_threads: Number of parallel threads for XML generation
     
@@ -1516,6 +1592,28 @@ def write_sheets_arrow(
             ... ]
             >>> 
             >>> jetxl.write_sheets_arrow(sheets, "dashboard.xlsx", num_threads=2)
+
+            Sheet Appearance Per Sheet:
+            >>> sheets = [
+            ...     {
+            ...         "data": df_sales.to_arrow(),
+            ...         "name": "Sales",
+            ...         "gridlines_visible": False,
+            ...         "zoom_scale": 120,
+            ...         "tab_color": "FF00B050",  # Green
+            ...         "default_row_height": 18.0,
+            ...         "column_widths": {"Product": 25.0, "Revenue": 15.0}
+            ...     },
+            ...     {
+            ...         "data": df_costs.to_arrow(),
+            ...         "name": "Costs",
+            ...         "hidden_columns": [2, 3],
+            ...         "hidden_rows": [5],
+            ...         "right_to_left": False,
+            ...         "tab_color": "FFFF0000"  # Red
+            ...     }
+            ... ]
+            >>> jetxl.write_sheets_arrow(sheets, "styled.xlsx", num_threads=2)
         
         Complex Multi-Sheet Report:
             >>> import polars as pl

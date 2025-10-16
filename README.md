@@ -107,7 +107,7 @@ jet.write_sheet_arrow(
     auto_width=False,              # Auto-calculate column widths
     styled_headers=False,          # Apply bold styling to headers
     write_header_row=True,         # Write column names as first row
-    column_widths=None,            # Dict[str, float] - manual widths
+    column_widths=None,            # Dict[str, float|str] - manual widths
     column_formats=None,           # Dict[str, str] - number formats
     merge_cells=None,              # List[(row, col, row, col)] - merge ranges
     data_validations=None,         # List[dict] - validation rules
@@ -118,7 +118,15 @@ jet.write_sheet_arrow(
     conditional_formats=None,      # List[dict] - conditional formatting
     tables=None,                   # List[dict] - Excel table definitions
     charts=None,                   # List[dict] - Excel chart definitions
-    images=None                    # List[dict] - Excel image definitions
+    images=None,                   # List[dict] - Excel image definitions
+    gridlines_visible=True,        # Show worksheet gridlines
+    zoom_scale=None,               # Zoom percentage 10-400
+    tab_color=None,                # Sheet tab color (ARGB hex)
+    default_row_height=None,       # Default row height in points
+    hidden_columns=None,           # List[int] - column indices to hide
+    hidden_rows=None,              # List[int] - row indices to hide
+    right_to_left=False,           # Enable RTL layout
+    data_start_row=0               # Skip rows for auto-width calculation
 )
 ```
 
@@ -438,13 +446,13 @@ column_formats = {
 ```
 
 ### Column Widths & Row Heights
-
 ```python
+# Manual column widths
 jet.write_sheet_arrow(
     df.to_arrow(),
     "sized.xlsx",
     column_widths={
-        "Product": 20.0,
+        "Product": 20.0,      # 20 character units
         "Description": 50.0,
         "Price": 12.0
     },
@@ -454,7 +462,34 @@ jet.write_sheet_arrow(
         5: 30.0     # Fifth row
     }
 )
+
+# Column widths in pixels (converted automatically)
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "pixel_widths.xlsx",
+    column_widths={
+        "Name": "150px",      # 150 pixels
+        "Email": "200px",
+        "Status": "80px"
+    }
+)
+
+# Mix of manual and auto
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "mixed_widths.xlsx",
+    auto_width=True,          # Auto-calculate most columns
+    column_widths={
+        "ID": 8.0,            # Override: fixed width for ID
+        "Notes": 60.0         # Override: extra wide for notes
+    }
+)
 ```
+
+**Column Width Units:**
+- Float (e.g., `20.0`) - Excel character units (width of '0' in standard font)
+- String with "px" (e.g., `"150px"`) - Pixels (converted to character units)
+- `"auto"` - Calculate from content (same as `auto_width=True`)
 
 ### Cell Styles
 
@@ -494,7 +529,88 @@ cell_styles = [
 jet.write_sheet_arrow(df.to_arrow(), "styled.xlsx", cell_styles=cell_styles)
 ```
 
-**Border styles:** `thin`, `medium`, `thick`, `double`, `dotted`, `dashed`
+### Text Rotation
+
+Rotate text in cells for compact headers or labels:
+```python
+cell_styles = [{
+    "row": 1,
+    "col": 0,
+    "alignment": {
+        "horizontal": "center",
+        "vertical": "center",
+        "text_rotation": 45  # 0-180 degrees, or 255 for vertical text
+    }
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "rotated.xlsx", cell_styles=cell_styles)
+```
+
+**Rotation values:**
+- `0` - No rotation (default)
+- `1-90` - Counterclockwise rotation
+- `91-180` - Clockwise rotation (91 = -89°)
+- `255` - Vertical text (top to bottom)
+
+### Fill Patterns
+
+Excel supports different fill patterns:
+```python
+# Solid fill (most common)
+cell_styles = [{
+    "row": 2,
+    "col": 0,
+    "fill": {
+        "pattern": "solid",
+        "fg_color": "FFFFFF00"  # Yellow
+    }
+}]
+
+# Gray pattern (subtle shading)
+cell_styles = [{
+    "row": 2,
+    "col": 0,
+    "fill": {
+        "pattern": "gray125",
+        "fg_color": "FFD9D9D9"  # Light gray
+    }
+}]
+
+# No fill (transparent)
+cell_styles = [{
+    "row": 2,
+    "col": 0,
+    "fill": {
+        "pattern": "none"
+    }
+}]
+```
+
+### Complete Border Example
+
+Apply different border styles to all four sides:
+```python
+cell_styles = [{
+    "row": 2,
+    "col": 0,
+    "border": {
+        "left": {"style": "thin", "color": "FF000000"},
+        "right": {"style": "medium", "color": "FF000000"},
+        "top": {"style": "thick", "color": "FF0070C0"},
+        "bottom": {"style": "double", "color": "FF000000"}
+    }
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "borders.xlsx", cell_styles=cell_styles)
+```
+
+**Available border styles:**
+- `"thin"` - Standard thin line
+- `"medium"` - Medium weight line
+- `"thick"` - Thick line
+- `"double"` - Double line
+- `"dotted"` - Dotted line
+- `"dashed"` - Dashed line
 
 **Color Format Guide:**
 - Colors use ARGB hexadecimal format: `AARRGGBB`
@@ -667,6 +783,37 @@ jet.write_sheet_arrow(
     charts=charts
 )
 ```
+### Custom Series Names
+
+By default, series names come from column headers. Override them for better labels:
+```python
+df = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar"],
+    "Rev_North": [1000, 1100, 1050],
+    "Rev_South": [800, 850, 900],
+    "Rev_West": [1200, 1250, 1300]
+})
+
+charts = [{
+    "chart_type": "column",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 3,
+    "end_col": 3,
+    "from_col": 5,
+    "from_row": 1,
+    "to_col": 13,
+    "to_row": 16,
+    "title": "Regional Sales",
+    "category_col": 0,
+    # Override column names with friendly labels
+    "series_names": ["North Region", "South Region", "West Region"]
+    # Without this, legend would show "Rev_North", "Rev_South", "Rev_West"
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "chart.xlsx", charts=charts)
+```
+
 
 ### Chart Configuration
 
@@ -1121,15 +1268,19 @@ jet.write_sheet(data, "legacy_chart.xlsx", charts=charts)
 
 ## 🖼️ Excel Images
 
-Add images (logos, charts, diagrams) to your Excel sheets with precise positioning control. Jetxl supports loading images from files or raw bytes.
+Add images (logos, charts, diagrams) to your Excel sheets with precise positioning control.
 
 ### Supported Image Formats
 
-- PNG (`.png`)
-- JPEG (`.jpg`, `.jpeg`)
-- GIF (`.gif`)
-- BMP (`.bmp`)
-- TIFF (`.tiff`, `.tif`)
+| Format | Extensions | Best For | Notes |
+|--------|------------|----------|-------|
+| PNG | `.png` | Logos, screenshots | Lossless, supports transparency |
+| JPEG | `.jpg`, `.jpeg` | Photos | Smaller file size, no transparency |
+| GIF | `.gif` | Simple graphics | Limited colors, supports animation |
+| BMP | `.bmp` | Windows bitmaps | Large file size, uncompressed |
+| TIFF | `.tiff`, `.tif` | High-quality images | Professional printing |
+
+### Adding Images from Files
 
 ### Adding Images from Files
 
@@ -1449,8 +1600,7 @@ hyperlinks = [
 jet.write_sheet_arrow(df.to_arrow(), "links.xlsx", hyperlinks=hyperlinks)
 ```
 
-## 🔢 Formulas
-
+## 📢 Formulas
 ```python
 formulas = [
     (2, 3, "=SUM(A2:C2)", None),           # Simple formula
@@ -1460,6 +1610,30 @@ formulas = [
 
 jet.write_sheet_arrow(df.to_arrow(), "formulas.xlsx", formulas=formulas)
 ```
+
+### Understanding Cached Values
+
+The cached value is the pre-calculated result shown before Excel recalculates the formula:
+```python
+formulas = [
+    # No cached value - Excel calculates on open
+    (2, 3, "=SUM(A2:C2)", None),
+    
+    # With cached value - shows "45.5" until Excel recalculates
+    (5, 3, "=AVERAGE(D2:D4)", "45.5"),
+]
+```
+
+**When to use cached values:**
+- Formulas that reference external data sources
+- Complex calculations that take time to compute
+- When you want to show a result before Excel opens
+- Cross-workbook references that may not be available
+
+**When to use None:**
+- Simple formulas (SUM, AVERAGE of local cells)
+- When you want Excel to always calculate fresh
+- Formulas with volatile functions (NOW, RAND)
 
 ## 🔀 Merge Cells
 
@@ -1524,6 +1698,7 @@ validations = [{
 
 ### Text Length
 
+Validate text input length:
 ```python
 validations = [{
     "start_row": 2,
@@ -1532,8 +1707,12 @@ validations = [{
     "end_col": 0,
     "type": "text_length",
     "min": 3,
-    "max": 50
+    "max": 20,
+    "error_title": "Invalid Username",
+    "error_message": "Username must be 3-20 characters long"
 }]
+
+jet.write_sheet_arrow(df.to_arrow(), "validation.xlsx", data_validations=validations)
 ```
 
 ## 🎨 Conditional Formatting
@@ -1564,12 +1743,35 @@ conditional_formats = [{
 
 jet.write_sheet_arrow(df.to_arrow(), "conditional.xlsx", conditional_formats=conditional_formats)
 ```
+### All Comparison Operators
 
-**Operators:** `greater_than`, `less_than`, `equal`, `not_equal`, `greater_than_or_equal`, `less_than_or_equal`, `between`
-
-### Color Scales
-
+The `cell_value` rule type supports these operators:
 ```python
+# Greater than
+"operator": "greater_than",  "value": "100"
+
+# Less than
+"operator": "less_than",  "value": "50"
+
+# Equal to
+"operator": "equal",  "value": "0"
+
+# Not equal to
+"operator": "not_equal",  "value": "0"
+
+# Greater than or equal
+"operator": "greater_than_or_equal",  "value": "100"
+
+# Less than or equal
+"operator": "less_than_or_equal",  "value": "50"
+
+# Between (use comma-separated values)
+"operator": "between",  "value": "10,100"
+```
+
+### Color Scale Variations
+```python
+# Two-color scale (min to max)
 conditional_formats = [{
     "start_row": 2,
     "start_col": 2,
@@ -1578,29 +1780,29 @@ conditional_formats = [{
     "rule_type": "color_scale",
     "min_color": "FFF8696B",  # Red
     "max_color": "FF63BE7B",  # Green
-    "mid_color": "FFFFEB84",  # Yellow (optional)
     "priority": 1
 }]
-```
 
-### Data Bars
-
-```python
+# Three-color scale (min to mid to max)
+# Better for showing deviation from average/target
 conditional_formats = [{
     "start_row": 2,
     "start_col": 2,
     "end_row": 100,
     "end_col": 2,
-    "rule_type": "data_bar",
-    "color": "FF638EC6",  # Blue
-    "show_value": True,
+    "rule_type": "color_scale",
+    "min_color": "FFF8696B",  # Red for low values
+    "mid_color": "FFFFEB84",  # Yellow for medium values
+    "max_color": "FF63BE7B",  # Green for high values
     "priority": 1
 }]
 ```
 
-### Top 10 / Bottom 10
+### Top/Bottom N Values
 
+Highlight the highest or lowest values in a range:
 ```python
+# Highlight top 10 values
 conditional_formats = [{
     "start_row": 2,
     "start_col": 2,
@@ -1608,13 +1810,27 @@ conditional_formats = [{
     "end_col": 2,
     "rule_type": "top10",
     "rank": 10,
-    "bottom": False,  # Set to True for bottom 10
+    "bottom": False,  # Top 10 (set to True for bottom 10)
     "priority": 1,
     "style": {
-        "font": {
-            "bold": True,
-            "color": "FF0070C0"
-        }
+        "font": {"bold": True, "color": "FF00B050"},
+        "fill": {"pattern": "solid", "fg_color": "FFC6EFCE"}
+    }
+}]
+
+# Highlight bottom 5 values
+conditional_formats = [{
+    "start_row": 2,
+    "start_col": 2,
+    "end_row": 100,
+    "end_col": 2,
+    "rule_type": "top10",
+    "rank": 5,
+    "bottom": True,  # Bottom 5
+    "priority": 1,
+    "style": {
+        "font": {"bold": True, "color": "FFFF0000"},
+        "fill": {"pattern": "solid", "fg_color": "FFFFC7CE"}
     }
 }]
 ```
@@ -1653,6 +1869,206 @@ jet.write_sheets_arrow(
     num_threads=4  # Use 4 threads for parallel generation
 )
 ```
+## 🎨 Sheet Appearance & Layout
+
+### Gridlines and Zoom
+
+Control worksheet visibility settings:
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Product": ["A", "B", "C"],
+    "Price": [10.0, 20.0, 30.0]
+})
+
+# Hide gridlines and set zoom
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "clean_view.xlsx",
+    gridlines_visible=False,  # Hide gridlines for cleaner look
+    zoom_scale=150            # Zoom to 150% (range: 10-400)
+)
+```
+
+### Sheet Tab Colors
+
+Color-code your sheets for better organization:
+```python
+# Single sheet with colored tab
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "colored_tab.xlsx",
+    tab_color="FFFF0000"  # Red tab (ARGB format)
+)
+
+# Multiple sheets with different colors
+sheets = [
+    {
+        "data": df_sales.to_arrow(),
+        "name": "Sales",
+        "tab_color": "FF00B050"  # Green
+    },
+    {
+        "data": df_costs.to_arrow(),
+        "name": "Costs",
+        "tab_color": "FFFF0000"  # Red
+    },
+    {
+        "data": df_profit.to_arrow(),
+        "name": "Profit",
+        "tab_color": "FF0070C0"  # Blue
+    }
+]
+
+jet.write_sheets_arrow(sheets, "colored_tabs.xlsx", num_threads=2)
+```
+
+**Common Tab Colors:**
+- `"FF4472C4"` - Blue
+- `"FF00B050"` - Green
+- `"FFFF0000"` - Red
+- `"FFFFC000"` - Orange
+- `"FF7030A0"` - Purple
+
+### Default Row Height
+
+Set a consistent row height for all rows:
+```python
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "tall_rows.xlsx",
+    default_row_height=25.0,  # 25 points (default is 15)
+    row_heights={
+        1: 35.0,  # Override: make header taller
+        5: 20.0   # Override: specific row
+    }
+)
+```
+
+### Hidden Rows and Columns
+
+Hide sensitive or intermediate data:
+```python
+df = pl.DataFrame({
+    "ID": [1, 2, 3],
+    "Name": ["Alice", "Bob", "Charlie"],
+    "Secret": ["X", "Y", "Z"],
+    "Salary": [50000, 60000, 75000],
+    "Bonus": [5000, 6000, 7500]
+})
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "hidden_data.xlsx",
+    hidden_columns=[2, 4],  # Hide "Secret" (col 2) and "Bonus" (col 4)
+    hidden_rows=[3]         # Hide row 3
+)
+```
+
+**Note:** Hidden data is still in the file - it's just not visible by default. Users can unhide it in Excel.
+
+### Right-to-Left Layout
+
+For languages like Arabic, Hebrew, Persian, etc.:
+```python
+df = pl.DataFrame({
+    "שם": ["אליס", "בוב", "צ'רלי"],
+    "גיל": [25, 30, 35]
+})
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "hebrew.xlsx",
+    right_to_left=True  # Sheet flows from right to left
+)
+```
+
+### Auto-Width with Complex Headers
+
+When your Excel file has multiple header rows, dummy rows, or template rows, exclude them from width calculation:
+```python
+# Scenario: Your file structure is:
+# Row 1: Company logo (merged cells with long text)
+# Row 2: Report title "Q4 2024 Financial Summary - Confidential"
+# Row 3: Date range
+# Row 4: Empty spacing row
+# Row 5: Column headers (Name, Amount, Status)
+# Row 6+: Actual data
+
+# Without data_start_row, auto_width uses ALL rows including dummy rows
+# This makes columns unnecessarily wide to fit the title text
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "complex_report.xlsx",
+    auto_width=True,
+    data_start_row=5  # Start width calculation from row 5 (actual data)
+    # Now columns are sized based on data + headers only
+)
+```
+
+**Common use cases:**
+- Reports with title rows, logos, or metadata at the top
+- Templates with pre-existing formatting rows
+- Multi-section reports where only one section should determine width
+- Files with merged header rows that contain long text
+
+### Professional Dashboard Example
+
+Combine appearance settings for a polished look:
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Quarter": ["Q1", "Q2", "Q3", "Q4"],
+    "Revenue": [100000, 120000, 115000, 140000],
+    "Target": [95000, 110000, 120000, 135000]
+})
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "executive_dashboard.xlsx",
+    sheet_name="Performance",
+    
+    # Clean appearance
+    gridlines_visible=False,
+    zoom_scale=120,
+    tab_color="FF0070C0",
+    default_row_height=20.0,
+    
+    # Formatting
+    styled_headers=True,
+    freeze_rows=1,
+    auto_width=True,
+    column_formats={
+        "Revenue": "currency",
+        "Target": "currency"
+    },
+    
+    # Visualization
+    charts=[{
+        "chart_type": "column",
+        "start_row": 1,
+        "start_col": 0,
+        "end_row": 4,
+        "end_col": 2,
+        "from_col": 4,
+        "from_row": 1,
+        "to_col": 12,
+        "to_row": 18,
+        "title": "Revenue vs Target",
+        "category_col": 0,
+        "x_axis_title": "Quarter",
+        "y_axis_title": "Amount ($)"
+    }]
+)
+```
+
+
+
 
 ## 📋 Complete Example
 

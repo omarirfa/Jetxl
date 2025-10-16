@@ -134,6 +134,7 @@ fn write_sheets(
 ///         - float/int: Excel character units (e.g., 15.5)
 ///         - "150px": Pixel width (converted to characters)
 ///         - "auto": Auto-calculate from data
+///     column_widths (dict[str, float], optional): Manual column widths by name
 ///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
 ///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
 ///     data_validations (list[dict], optional): Data validation rules
