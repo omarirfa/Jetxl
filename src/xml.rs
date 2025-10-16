@@ -249,11 +249,13 @@ pub fn generate_content_types_with_charts(
         }
     }
     
-    for (i, &(_, drawing_count)) in images_per_sheet.iter().enumerate() {
+    let mut drawing_id = 1;
+    for &(_, drawing_count) in images_per_sheet {
         if drawing_count > 0 {
             xml.push_str("<Override PartName=\"/xl/drawings/drawing");
-            xml.push_str(&(i + 1).to_string());
+            xml.push_str(&drawing_id.to_string()); // Use drawing_id, not sheet index
             xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>");
+            drawing_id += 1;
         }
     }
 
@@ -1206,6 +1208,13 @@ pub fn generate_sheet_xml_from_arrow(
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
 
+    // SheetPr (tab color - must come before dimension)
+    if let Some(ref color) = config.tab_color {
+        buf.extend_from_slice(b"<sheetPr><tabColor rgb=\"");
+        buf.extend_from_slice(color.as_bytes());
+        buf.extend_from_slice(b"\"/></sheetPr>");
+    }
+
     // Dimension
     buf.extend_from_slice(b"<dimension ref=\"");
     if total_rows > 0 {
@@ -1221,8 +1230,26 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"\"/>");
 
-    // SheetViews (with optional freeze panes)
+    // SheetViews (with gridlines, zoom, RTL, and optional freeze panes)
     buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
+    
+    // Add showGridLines if disabled
+    if !config.gridlines_visible {
+        buf.extend_from_slice(b" showGridLines=\"0\"");
+    }
+    
+    // Add zoom scale
+    if let Some(zoom) = config.zoom_scale {
+        buf.extend_from_slice(b" zoomScale=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(zoom).as_bytes());
+        buf.push(b'\"');
+    }
+    
+    // Add right-to-left
+    if config.right_to_left {
+        buf.extend_from_slice(b" rightToLeft=\"1\"");
+    }
+    
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
         buf.push(b'>');
         buf.extend_from_slice(b"<pane ");
@@ -1247,26 +1274,40 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"/></sheetViews>");
     }
 
-    // SheetFormatPr (optional custom row heights)
-    if config.row_heights.is_some() {
-        buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"15\"/>");
+    // SheetFormatPr (default row height)
+    buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"");
+    let default_height = config.default_row_height.unwrap_or(15.0);
+    buf.extend_from_slice(ryu::Buffer::new().format(default_height).as_bytes());
+    buf.push(b'\"');
+    if config.default_row_height.is_some() {
+        buf.extend_from_slice(b" customHeight=\"1\"");
     }
+    buf.extend_from_slice(b"/>");
 
-    // Cols (column widths)
-    if config.auto_width || config.column_widths.is_some() {
+    // Cols (column widths and hidden columns)
+    if config.auto_width || config.column_widths.is_some() || !config.hidden_columns.is_empty() {
         buf.extend_from_slice(b"<cols>");
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let width = if let Some(widths) = &config.column_widths {
-                widths.get(field.name()).copied().unwrap_or_else(|| {
-                    if config.auto_width && !batches.is_empty() {
-                        calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                             field.name(), 100)
-                    } else { 8.43 }
-                })
-            } else if config.auto_width && !batches.is_empty() {
-                calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                     field.name(), 100)
+                if let Some(col_width) = widths.get(field.name()) {
+                    match col_width {
+                        ColumnWidth::Characters(w) => *w,
+                        ColumnWidth::Pixels(px) => px / 7.0,  // Calibri 11pt MDW
+                        ColumnWidth::Auto => calculate_column_width(
+                            batches[0].column(col_idx).as_ref(),
+                            field.name(), 100, config.data_start_row
+                        ),
+                    }
+                } else if config.auto_width {
+                    calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                        field.name(), 100, config.data_start_row)
+                } else {
+                    8.43
+                }
+            } else if config.auto_width {
+                calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                    field.name(), 100, config.data_start_row)
             } else {
                 8.43
             };
@@ -1277,7 +1318,14 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(itoa::Buffer::new().format(col_idx + 1).as_bytes());
             buf.extend_from_slice(b"\" width=\"");
             buf.extend_from_slice(ryu::Buffer::new().format(width).as_bytes());
-            buf.extend_from_slice(b"\" customWidth=\"1\"/>");
+            buf.extend_from_slice(b"\" customWidth=\"1\"");
+            
+            // Hidden column
+            if config.hidden_columns.contains(&col_idx) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.extend_from_slice(b"/>");
         }
         
         buf.extend_from_slice(b"</cols>");
@@ -1319,7 +1367,11 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
             buf.extend_from_slice(b"\" customHeight=\"1\"");
         }
-        buf.extend_from_slice(b">");
+        // Hidden row check for header
+        if config.hidden_rows.contains(&1) {
+            buf.extend_from_slice(b" hidden=\"1\"");
+        }
+        buf.push(b'>');
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let (col_letter, col_len) = &col_letters[col_idx];
@@ -1355,7 +1407,7 @@ pub fn generate_sheet_xml_from_arrow(
                 
                 buf.extend_from_slice(b"<row r=\"");
                 buf.extend_from_slice(row_bytes);
-                buf.extend_from_slice(b"\"");
+                buf.push(b'\"');
                 
                 if let Some(heights) = &config.row_heights {
                     if let Some(height) = heights.get(&current_row) {
@@ -1365,7 +1417,12 @@ pub fn generate_sheet_xml_from_arrow(
                     }
                 }
                 
-                buf.extend_from_slice(b">");
+                // Hidden row check for table header
+                if config.hidden_rows.contains(&current_row) {
+                    buf.extend_from_slice(b" hidden=\"1\"");
+                }
+                
+                buf.push(b'>');
                 
                 // Write header cells for table columns
                 for col_idx in start_col..=end_col {
@@ -1402,7 +1459,7 @@ pub fn generate_sheet_xml_from_arrow(
 
             buf.extend_from_slice(b"<row r=\"");
             buf.extend_from_slice(row_bytes);
-            buf.extend_from_slice(b"\"");
+            buf.push(b'\"');
             
             if let Some(heights) = &config.row_heights {
                 if let Some(height) = heights.get(&row_num) {
@@ -1412,7 +1469,12 @@ pub fn generate_sheet_xml_from_arrow(
                 }
             }
             
-            buf.extend_from_slice(b">");
+            // Hidden row check
+            if config.hidden_rows.contains(&row_num) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.push(b'>');
 
             for col_idx in 0..num_cols {
                 let array = batch.column(col_idx);
@@ -1452,8 +1514,13 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
+    // AutoFilter - only if no table covers the entire range from A1
+    let has_full_table = config.tables.iter().any(|t| {
+        let (start_row, start_col, end_row, end_col) = t.range;
+        start_row == 1 && start_col == 0 && end_row >= total_rows && end_col >= num_cols - 1
+    });
     // AutoFilter
-    if config.auto_filter && total_rows > 0 {
+    if config.auto_filter && total_rows > 0 && !has_full_table {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
         let mut col_buf = [0u8; 4];
         let col_len = write_col_letter(num_cols - 1, &mut col_buf);
@@ -1765,6 +1832,11 @@ fn write_arrow_cell_to_xml_optimized(
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
             
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
+
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
             if let Some(sid) = style_id {
@@ -1783,6 +1855,11 @@ fn write_arrow_cell_to_xml_optimized(
             let start = offsets[row_idx] as usize;
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
+
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
             
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
@@ -1854,14 +1931,14 @@ fn write_arrow_cell_to_xml_optimized(
                 .checked_add_signed(chrono::Duration::days(days as i64))
                 .ok_or_else(|| WriteError::Validation("Date out of range".to_string()))?;
             let dt = date.and_hms_opt(0, 0, 0).unwrap();
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(10)), buf, ryu_buf);
         }
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             let millis = arr.value(row_idx);
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
-            write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&datetime.naive_utc(), cell_ref, style_id.or(Some(10)), buf, ryu_buf); // Date-only format
         }
        DataType::Time32(unit) => {
             use arrow_schema::TimeUnit;
@@ -1876,8 +1953,8 @@ fn write_arrow_cell_to_xml_optimized(
                 }
                 _ => 0.0,
             };
-            // let time_fraction = seconds / 86400.0;
-            // write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
+            let time_fraction = seconds / 86400.0;
+            write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
         }
         DataType::Time64(unit) => {
             use arrow_schema::TimeUnit;
@@ -1929,7 +2006,7 @@ fn write_arrow_cell_to_xml_optimized(
                         .naive_utc()
                 }
             };
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(1)), buf, ryu_buf);
         }
         _ => {
             buf.extend_from_slice(b"<c r=\"");
@@ -1973,6 +2050,19 @@ fn write_number_cell(
     ryu_buf: &mut ryu::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
+
+    // Excel can't handle NaN or inf - write empty cell instead
+    if !n.is_finite() {
+        buf.extend_from_slice(b"<c r=\"");
+        buf.extend_from_slice(cell_ref);
+        if let Some(sid) = style_id {
+            buf.extend_from_slice(b"\" s=\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+        }
+        buf.extend_from_slice(b"\"/>");
+        return;
+    }
+
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     if let Some(sid) = style_id {

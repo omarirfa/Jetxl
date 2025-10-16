@@ -252,7 +252,7 @@ pub struct StyleConfig {
     pub freeze_cols: usize,
     pub styled_headers: bool,
     pub write_header_row: bool,
-    pub column_widths: Option<HashMap<String, f64>>,
+    pub column_widths: Option<HashMap<String, ColumnWidth>>,
     pub auto_width: bool,
     pub column_formats: Option<HashMap<String, NumberFormat>>,
     pub merge_cells: Vec<MergeRange>,
@@ -266,6 +266,21 @@ pub struct StyleConfig {
     pub tables: Vec<ExcelTable>,
     pub charts: Vec<ExcelChart>,
     pub images: Vec<ExcelImage>,
+    pub gridlines_visible: bool,
+    pub zoom_scale: Option<u16>, // 10-400
+    pub tab_color: Option<String>, // RGB like "FFFF0000"
+    pub default_row_height: Option<f64>,
+    pub hidden_columns: Vec<usize>,
+    pub hidden_rows: Vec<usize>,
+    pub right_to_left: bool,
+    pub data_start_row: usize
+}
+
+#[derive(Debug, Clone)]
+pub enum ColumnWidth {
+    Characters(f64),  // Excel native units
+    Pixels(f64),      // Convert to characters: px / 7.0
+    Auto,             // Calculate from data
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +311,15 @@ impl Default for StyleConfig {
             cond_format_dxf_ids: HashMap::new(),
             tables: Vec::new(),
             charts: Vec::new(),
-            images: Vec::new()
+            images: Vec::new(),
+            gridlines_visible: true,
+            zoom_scale: None,
+            tab_color: None,
+            default_row_height: None,
+            hidden_columns: Vec::new(),
+            hidden_rows: Vec::new(),
+            right_to_left: false,
+            data_start_row: 0,
         }
     }
 }
@@ -349,7 +372,7 @@ impl StyleRegistry {
     fn build_default_xfs(&mut self) {
         self.cell_xfs = vec![
             CellXfEntry { num_fmt_id: 0, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
-            CellXfEntry { num_fmt_id: 164, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
+            CellXfEntry { num_fmt_id: 164, font_id: 0, fill_id: 0, border_id: 0, alignment: None }, // datetime
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 0, font_id: 1, fill_id: 2, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 168, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
@@ -358,7 +381,7 @@ impl StyleRegistry {
             CellXfEntry { num_fmt_id: 165, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 166, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 0, font_id: 2, fill_id: 0, border_id: 0, alignment: None },
-        ];
+            CellXfEntry { num_fmt_id: 14, font_id: 0, fill_id: 0, border_id: 0, alignment: None }, 
     }
     fn get_or_add_num_fmt(&mut self, fmt: &NumberFormat) -> u32 {
         let (base_id, code_opt) = fmt.fmt_info();
@@ -737,21 +760,24 @@ pub fn calculate_column_width(
     array: &dyn Array,
     header: &str,
     max_rows_to_scan: usize,
+    skip_rows: usize,
 ) -> f64 {
     use arrow_array::{StringArray, LargeStringArray};
     
-    let mut max_len = header.len();
+ let mut max_len = header.len();
     
     if let Some(str_array) = array.as_any().downcast_ref::<StringArray>() {
-        let rows_to_check = str_array.len().min(max_rows_to_scan);
-        for i in 0..rows_to_check {
+        let start_idx = skip_rows.min(str_array.len()); 
+        let rows_to_check = str_array.len().min(start_idx + max_rows_to_scan);  
+        for i in start_idx..rows_to_check {  
             if !str_array.is_null(i) {
                 max_len = max_len.max(str_array.value(i).len());
             }
         }
     } else if let Some(str_array) = array.as_any().downcast_ref::<LargeStringArray>() {
-        let rows_to_check = str_array.len().min(max_rows_to_scan);
-        for i in 0..rows_to_check {
+        let start_idx = skip_rows.min(str_array.len());  
+        let rows_to_check = str_array.len().min(start_idx + max_rows_to_scan);  
+        for i in start_idx..rows_to_check {  
             if !str_array.is_null(i) {
                 max_len = max_len.max(str_array.value(i).len());
             }

@@ -44,8 +44,9 @@ pub fn write_single_sheet_with_config(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet.name.as_str()];
     let charts_count = vec![config.charts.len()];
+    let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
     
-    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count, &[(vec![], 0)]);
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count, &[(vec![], drawing_count)]);
     
     let xml_data = xml::generate_sheet_xml_from_dict(sheet, config)?;
     zipper
@@ -209,17 +210,20 @@ pub fn write_single_sheet_arrow_with_config(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet_name];
     let charts_count = vec![config.charts.len()];
-    let images_data = vec![(config.images.clone(), if config.images.is_empty() { 0 } else { 1 })];
+    // let images_data = vec![(config.images.clone(), if config.images.is_empty() { 0 } else { 1 })];
+    let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
+    let images_data = vec![(config.images.clone(), drawing_count)];
     
+
     add_static_files(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count, &images_data);
     
     let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map, &cell_style_map)?;
     
     // DEBUG: Check for leading garbage
-    if xml_data.len() > 0 {
-        eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
-        eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
-    }
+    // if xml_data.len() > 0 {
+    //     eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
+    //     eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
+    // }
 
     
     zipper
@@ -290,7 +294,7 @@ pub fn write_single_sheet_arrow_with_config(
         }
     }
     
-    let has_drawing = !config.charts.is_empty() || !config.images.is_empty();;
+    let has_drawing = !config.charts.is_empty() || !config.images.is_empty();
     
     if has_drawing {
         let drawing_xml = generate_drawing_xml_combined(&config.charts, &config.images);
@@ -460,12 +464,13 @@ pub fn write_multiple_sheets_arrow_with_configs(
     let charts_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.charts.len()).collect();
 
     let images_per_sheet: Vec<(Vec<ExcelImage>, usize)> = sheets.iter()
-        .map(|(_, _, cfg)| {
-            let count = if cfg.images.is_empty() { 0 } else { 1 };
-            (cfg.images.clone(), count)
-    })
-    .collect();
-add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet, &images_per_sheet);
+            .map(|(_, _, cfg)| {
+                // count drawing if charts OR images exist
+                let count = if cfg.charts.is_empty() && cfg.images.is_empty() { 0 } else { 1 };
+                (cfg.images.clone(), count)
+            })
+            .collect();
+    add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet, &images_per_sheet);
 
     let mut global_chart_id = 1;
     let mut global_table_id = 1;
