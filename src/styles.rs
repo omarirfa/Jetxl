@@ -1,6 +1,39 @@
-use std::collections::HashMap;
 use arrow_array::Array;
 use arrow_schema::DataType;
+use std::collections::{HashMap, HashSet};
+
+fn get_builtin_format_name(code: &str) -> Option<&'static str> {
+    match code.to_lowercase().as_str() {
+        "0" => Some("integer"),
+        "0.00" => Some("decimal2"),
+        "0.0000" => Some("decimal4"),
+        "0%" => Some("percentage"),
+        "0.00%" => Some("percentage_decimal"),
+        "$#,##0.00" => Some("currency"),
+        "$#,##0" => Some("currency_rounded"),
+        "yyyy-mm-dd hh:mm:ss" => Some("datetime"),
+        "hh:mm:ss" => Some("time"),
+        "0.00e+00" => Some("scientific"),
+        "# ?/?" => Some("fraction"),
+        "# ??/??" => Some("fraction_two_digits"),
+        "#,##0" => Some("thousands"),
+        _ => None,
+    }
+}
+
+fn is_likely_invalid_format(code: &str) -> bool {
+    if code.is_empty() {
+        return true;
+    }
+    
+    // Pure alphabetic strings are likely user errors like "accounting" instead of format codes
+    if code.chars().all(|c| c.is_alphabetic() || c.is_whitespace()) {
+        return true;
+    }
+    
+    false
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NumberFormat {
@@ -44,11 +77,11 @@ impl NumberFormat {
             NumberFormat::Date => (14, None),
             NumberFormat::DateTime => (164, None),
             NumberFormat::Time => (170, None),
-            NumberFormat::Scientific => (175, Some("0.00E+00")),
-            NumberFormat::Fraction => (176, Some("# ?/?")),
-            NumberFormat::FractionTwoDigits => (177, Some("# ??/??")),
-            NumberFormat::ThousandsSeparator => (173, Some("#,##0")),
-            NumberFormat::PercentageInteger => (174, Some("0%")),
+            NumberFormat::Scientific => (175, None),           // was: Some("0.00E+00")
+            NumberFormat::Fraction => (176, None),             // was: Some("# ?/?")
+            NumberFormat::FractionTwoDigits => (177, None),    // was: Some("# ??/??")
+            NumberFormat::ThousandsSeparator => (173, None),
+            NumberFormat::PercentageInteger => (174, None),
             NumberFormat::Custom(ref code) => (0, Some(code.as_str())), // ID assigned by registry
         }
     }
@@ -270,10 +303,11 @@ pub struct StyleConfig {
     pub zoom_scale: Option<u16>, // 10-400
     pub tab_color: Option<String>, // RGB like "FFFF0000"
     pub default_row_height: Option<f64>,
-    pub hidden_columns: Vec<usize>,
-    pub hidden_rows: Vec<usize>,
+    pub hidden_columns: HashSet<usize>,
+    pub hidden_rows: HashSet<usize>,
     pub right_to_left: bool,
-    pub data_start_row: usize
+    pub data_start_row: usize,
+    pub header_content: Vec<(usize, usize, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -316,10 +350,11 @@ impl Default for StyleConfig {
             zoom_scale: None,
             tab_color: None,
             default_row_height: None,
-            hidden_columns: Vec::new(),
-            hidden_rows: Vec::new(),
+            hidden_columns: HashSet::new(),
+            hidden_rows: HashSet::new(),
             right_to_left: false,
             data_start_row: 0,
+            header_content: Vec::new(),
         }
     }
 }
@@ -362,7 +397,7 @@ impl StyleRegistry {
             cell_xfs: vec![],
             dxfs: Vec::new(),
             custom_num_fmts: Vec::new(),
-            next_custom_fmt_id: 175,
+            next_custom_fmt_id: 178,
         };
         
         registry.build_default_xfs();
@@ -382,17 +417,31 @@ impl StyleRegistry {
             CellXfEntry { num_fmt_id: 166, font_id: 0, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 0, font_id: 2, fill_id: 0, border_id: 0, alignment: None },
             CellXfEntry { num_fmt_id: 14, font_id: 0, fill_id: 0, border_id: 0, alignment: None }, 
+        ];
     }
-    fn get_or_add_num_fmt(&mut self, fmt: &NumberFormat) -> u32 {
+    fn get_or_add_num_fmt(&mut self, fmt: &NumberFormat) -> Result<u32, String> {
         let (base_id, code_opt) = fmt.fmt_info();
         
         match code_opt {
-            None => base_id, // Built-in format
+            None => Ok(base_id),
             Some(code) => {
-                // Check if this custom format already exists
+                if is_likely_invalid_format(code) {
+                    return Err(format!(
+                        "Invalid format code: '{}'. Use valid Excel format codes like '0.00', '#,##0', or named formats like 'currency', 'decimal2'", 
+                        code
+                    ));
+                }
+                
+                // Check if custom format matches a built-in
+                if let Some(builtin_name) = get_builtin_format_name(code) {
+                    eprintln!("Warning: Format code '{}' matches built-in format '{}'. Recommend using column_formats={{'column': '{}'}}", 
+                        code, builtin_name, builtin_name);
+                }
+                
+                // Check for duplicates and reuse
                 for (id, existing_code) in &self.custom_num_fmts {
                     if existing_code == code {
-                        return *id;
+                        return Ok(*id);
                     }
                 }
                 
@@ -400,12 +449,12 @@ impl StyleRegistry {
                 let id = self.next_custom_fmt_id;
                 self.custom_num_fmts.push((id, code.to_string()));
                 self.next_custom_fmt_id += 1;
-                id
+                Ok(id)
             }
         }
     }
     
-    pub fn register_cell_style(&mut self, style: &CellStyle) -> u32 {
+    pub fn register_cell_style(&mut self, style: &CellStyle) -> Result<u32, String> {
         let font_id = if let Some(ref font) = style.font {
             self.get_or_add_font(font)
         } else {
@@ -425,7 +474,7 @@ impl StyleRegistry {
         };
         
         let num_fmt_id = if let Some(ref fmt) = style.number_format {
-            self.get_or_add_num_fmt(fmt)
+            self.get_or_add_num_fmt(fmt)?
         } else {
             0
         };
@@ -444,12 +493,12 @@ impl StyleRegistry {
                 && xf.fill_id == entry.fill_id 
                 && xf.border_id == entry.border_id 
                 && xf.alignment == entry.alignment {
-                return idx as u32;
+                return Ok(idx as u32);
             }
         }
         
         self.cell_xfs.push(entry);
-        (self.cell_xfs.len() - 1) as u32
+        Ok((self.cell_xfs.len() - 1) as u32)
     }
     
     pub fn register_dxf(&mut self, style: &CellStyle) -> u32 {
@@ -489,7 +538,7 @@ impl StyleRegistry {
 }
 
 pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
-    let base_count = 11; // Base built-in custom formats (164-174)
+    let base_count = 14; // Base built-in custom formats (164-174)
     let total_count = base_count + registry.custom_num_fmts.len();
     
     let mut xml = String::with_capacity(

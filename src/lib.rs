@@ -117,6 +117,7 @@ fn write_sheets(
     hidden_rows = None,
     right_to_left = false,
     data_start_row = 0,
+    header_content = None,
 ))]
 /// Write Arrow data to an Excel file with advanced formatting options.
 /// 
@@ -185,6 +186,7 @@ fn write_sheet_arrow(
     hidden_rows: Option<Vec<usize>>,
     right_to_left: bool,
     data_start_row: usize,
+    header_content: Option<Vec<(usize, usize, String)>>
 ) -> PyResult<()> {
     // Convert PyArrow data to RecordBatch
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
@@ -263,11 +265,12 @@ fn write_sheet_arrow(
         zoom_scale,
         tab_color,
         default_row_height,
-        hidden_columns: hidden_columns.unwrap_or_default(),
-        hidden_rows: hidden_rows.unwrap_or_default(),
+        hidden_columns: hidden_columns.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        hidden_rows: hidden_rows.map(|v| v.into_iter().collect()).unwrap_or_default(),
         right_to_left,
         data_start_row,
-    };
+        header_content: header_content.unwrap_or_default(),
+        };
 
     // Parse data validations
     if let Some(validations) = data_validations {
@@ -633,23 +636,22 @@ fn extract_column(py: Python, value: &Bound<PyAny>) -> PyResult<Vec<CellValue>> 
 fn parse_number_format(s: &str) -> Option<NumberFormat> {
     match s.to_lowercase().as_str() {
         "general" => Some(NumberFormat::General),
-        "integer" => Some(NumberFormat::Integer),
-        "decimal2" => Some(NumberFormat::Decimal2),
-        "decimal4" => Some(NumberFormat::Decimal4),
-        "percentage" => Some(NumberFormat::Percentage),
-        "percentage_decimal" => Some(NumberFormat::PercentageDecimal),
+        "integer" | "0" => Some(NumberFormat::Integer),
+        "decimal2" | "0.00" => Some(NumberFormat::Decimal2),
+        "decimal4" | "0.0000" => Some(NumberFormat::Decimal4),
+        "percentage" | "0%" => Some(NumberFormat::Percentage),
+        "percentage_decimal" | "0.00%" => Some(NumberFormat::PercentageDecimal),
         "percentage_integer" => Some(NumberFormat::PercentageInteger),
-        "currency" => Some(NumberFormat::Currency),
-        "currency_rounded" => Some(NumberFormat::CurrencyRounded),
+        "currency" | "$#,##0.00" => Some(NumberFormat::Currency),
+        "currency_rounded" | "$#,##0" => Some(NumberFormat::CurrencyRounded),
         "date" => Some(NumberFormat::Date),
-        "datetime" => Some(NumberFormat::DateTime),
-        "time" => Some(NumberFormat::Time),
-        "scientific" => Some(NumberFormat::Scientific),
-        "fraction" => Some(NumberFormat::Fraction),
-        "fraction_two_digits" => Some(NumberFormat::FractionTwoDigits),
-        "thousands" => Some(NumberFormat::ThousandsSeparator),
+        "datetime" | "yyyy-mm-dd hh:mm:ss" => Some(NumberFormat::DateTime),
+        "time" | "hh:mm:ss" => Some(NumberFormat::Time),
+        "scientific" | "0.00e+00" => Some(NumberFormat::Scientific),
+        "fraction" | "# ?/?" => Some(NumberFormat::Fraction),
+        "fraction_two_digits" | "# ??/??" => Some(NumberFormat::FractionTwoDigits),
+        "thousands" | "#,##0" => Some(NumberFormat::ThousandsSeparator),
         _ => {
-            // Treat unknown strings as custom format codes
             if s.is_empty() {
                 None
             } else {

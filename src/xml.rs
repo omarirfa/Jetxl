@@ -1331,6 +1331,7 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"</cols>");
     }
 
+
     // SheetData (all cell data)
     buf.extend_from_slice(b"<sheetData>");
 
@@ -1357,18 +1358,92 @@ pub fn generate_sheet_xml_from_arrow(
         .map(|f| ((f.row, f.col), f))
         .collect();
 
+    // Determine where DataFrame data actually starts
+    let data_start = if config.write_header_row { 
+        config.data_start_row.max(1) 
+    } else { 
+        config.data_start_row 
+    };
 
-    // Write header row (row 1) - only if enabled
+    // Write header_content rows (arbitrary content before DataFrame data)
+    if !config.header_content.is_empty() {
+        let mut rows_map: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
+        for (row, col, text) in &config.header_content {
+            rows_map.entry(*row).or_insert_with(Vec::new).push((*col, text.clone()));
+        }
+        
+        let mut sorted_rows: Vec<_> = rows_map.keys().copied().collect();
+        sorted_rows.sort();
+        
+        for row_num in sorted_rows {
+            if row_num >= data_start { break; }
+            
+            let row_str = int_buf.format(row_num);
+            let row_bytes = row_str.as_bytes();
+            
+            // Start row tag with row number
+            buf.extend_from_slice(b"<row r=\"");
+            buf.extend_from_slice(row_bytes);
+            buf.push(b'\"');  // CRITICAL: Always close the r attribute
+            
+            // Add optional row height
+            if let Some(heights) = &config.row_heights {
+                if let Some(height) = heights.get(&row_num) {
+                    buf.extend_from_slice(b" ht=\"");  // Note: leading space for separate attribute
+                    buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                    buf.extend_from_slice(b"\" customHeight=\"1\"");
+                }
+            }
+            
+            // Add hidden attribute if needed
+            if config.hidden_rows.contains(&row_num) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.push(b'>');  // Close row opening tag
+            
+            // Write cells in this row
+            if let Some(cells) = rows_map.get(&row_num) {
+                for (col_idx, text) in cells {
+                    let (col_letter, col_len) = &col_letters[*col_idx];
+                    
+                    // Cell reference (e.g., "A2")
+                    buf.extend_from_slice(b"<c r=\"");
+                    buf.extend_from_slice(&col_letter[..*col_len]);
+                    buf.extend_from_slice(row_bytes);
+                    buf.push(b'\"');  // Close r attribute
+                    
+                    // Apply custom cell style if defined
+                    if let Some(style_id) = cell_style_map.get(&(row_num, *col_idx)) {
+                        buf.extend_from_slice(b" s=\"");
+                        buf.extend_from_slice(itoa::Buffer::new().format(*style_id).as_bytes());
+                        buf.push(b'\"');  // Close s attribute
+                    }
+                    
+                    // Write inline string content
+                    buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
+                    xml_escape_simd(text.as_bytes(), &mut buf);
+                    buf.extend_from_slice(b"</t></is></c>");
+                }
+            }
+            
+            buf.extend_from_slice(b"</row>");
+        }
+    }
+
+    // Write DataFrame header row at data_start (only if enabled)
     if config.write_header_row {
-        let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
-        buf.extend_from_slice(b"<row r=\"1\"");
+        let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&data_start));
+        buf.extend_from_slice(b"<row r=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(data_start).as_bytes());
+        buf.push(b'\"');
         if let Some(height) = header_row_height {
             buf.extend_from_slice(b" ht=\"");
             buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
             buf.extend_from_slice(b"\" customHeight=\"1\"");
         }
         // Hidden row check for header
-        if config.hidden_rows.contains(&1) {
+        if config.hidden_rows.contains(&data_start) {
             buf.extend_from_slice(b" hidden=\"1\"");
         }
         buf.push(b'>');
@@ -1380,20 +1455,31 @@ pub fn generate_sheet_xml_from_arrow(
             
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(&col_letter[..*col_len]);
-            buf.extend_from_slice(b"1\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(data_start).as_bytes());
             if style_id > 0 {
-                buf.extend_from_slice(b" s=\"");
+                buf.extend_from_slice(b"\" s=\"");
                 buf.extend_from_slice(int_buf.format(style_id).as_bytes());
-                buf.extend_from_slice(b"\"");
             }
-            buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
+            buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
             xml_escape_simd(field.name().as_bytes(), &mut buf);
             buf.extend_from_slice(b"</t></is></c>");
         }
         buf.extend_from_slice(b"</row>");
     }
 
-    let mut current_row = if config.write_header_row { 2 } else { 1 };
+    let mut current_row = if config.write_header_row { data_start + 1 } else { data_start };
+    
+    // Build map of table header rows that need to be inserted
+    let mut table_header_rows: HashMap<usize, (usize, usize)> = HashMap::new();
+    let mut num_inserted_headers = 0;
+    for table in &config.tables {
+        let (start_row, start_col, _, end_col) = table.range;
+        // Only insert header if table starts after data_start and doesn't already have a header
+        if start_row > data_start {
+            table_header_rows.insert(start_row, (start_col, end_col));
+            num_inserted_headers += 1;
+        }
+    }
     
     // Write data rows (with optional table header insertion)
     for batch in batches {

@@ -166,21 +166,22 @@ pub fn write_single_sheet_arrow_with_config(
 
     let schema = batches[0].schema();
     let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
-        schema.fields().iter().enumerate()
-            .filter_map(|(idx, field)| {
-                formats.get(field.name()).map(|fmt| {
-                    let cell_style = CellStyle {
-                        font: None,
-                        fill: None,
-                        border: None,
-                        alignment: None,
-                        number_format: Some(fmt.clone()),
-                    };
-                    let style_id = registry.register_cell_style(&cell_style);
-                    (idx, style_id)
-                })
-            })
-            .collect()
+        let mut map = HashMap::new();
+        for (idx, field) in schema.fields().iter().enumerate() {
+            if let Some(fmt) = formats.get(field.name()) {
+                let cell_style = CellStyle {
+                    font: None,
+                    fill: None,
+                    border: None,
+                    alignment: None,
+                    number_format: Some(fmt.clone()),
+                };
+                let style_id = registry.register_cell_style(&cell_style)
+                    .map_err(|e| WriteError::Validation(e))?;
+                map.insert(idx, style_id);
+            }
+        }
+        map
     } else {
         HashMap::new()
     };
@@ -188,7 +189,8 @@ pub fn write_single_sheet_arrow_with_config(
     // Build cell style map - register and map user's custom cell styles
     let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
     for cell_style in &config.cell_styles {
-        let style_id = registry.register_cell_style(&cell_style.style);
+        let style_id = registry.register_cell_style(&cell_style.style)
+            .map_err(|e| WriteError::Validation(e))?;
         cell_style_map.insert((cell_style.row, cell_style.col), style_id);
     }
 
@@ -197,7 +199,8 @@ pub fn write_single_sheet_arrow_with_config(
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                    registry.register_cell_style(&cond_format.style);
+                    registry.register_cell_style(&cond_format.style)
+                        .map_err(|e| WriteError::Validation(e))?;
                     let dxf_id = registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
@@ -363,31 +366,30 @@ pub fn write_multiple_sheets_arrow_with_configs(
 
     for (batches, _, config) in sheets {
         let schema = batches[0].schema();
-        let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
-            schema.fields().iter().enumerate()
-                .filter_map(|(idx, field)| {
-                    formats.get(field.name()).map(|fmt| {
-                        let cell_style = CellStyle {
-                            font: None,
-                            fill: None,
-                            border: None,
-                            alignment: None,
-                            number_format: Some(fmt.clone()),
-                        };
-                        let style_id = style_registry.register_cell_style(&cell_style);
-                        (idx, style_id)
-                    })
-                })
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let mut col_format_map = HashMap::new();
+        if let Some(formats) = &config.column_formats {
+            for (idx, field) in schema.fields().iter().enumerate() {
+                if let Some(fmt) = formats.get(field.name()) {
+                    let cell_style = CellStyle {
+                        font: None,
+                        fill: None,
+                        border: None,
+                        alignment: None,
+                        number_format: Some(fmt.clone()),
+                    };
+                    let style_id = style_registry.register_cell_style(&cell_style)
+                        .map_err(|e| WriteError::Validation(e))?;
+                    col_format_map.insert(idx, style_id);
+                }
+            }
+        }
         sheet_col_format_maps.push(col_format_map);
 
         // Build cell style map for this sheet
         let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
         for cell_style in &config.cell_styles {
-            let style_id = style_registry.register_cell_style(&cell_style.style);
+            let style_id = style_registry.register_cell_style(&cell_style.style)
+                .map_err(|e| WriteError::Validation(e))?;
             cell_style_map.insert((cell_style.row, cell_style.col), style_id);
         }
         sheet_cell_style_maps.push(cell_style_map);
@@ -396,7 +398,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                    style_registry.register_cell_style(&cond_format.style);
+                    style_registry.register_cell_style(&cond_format.style)
+                        .map_err(|e| WriteError::Validation(e))?;
                     let dxf_id = style_registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
