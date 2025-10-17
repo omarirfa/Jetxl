@@ -109,8 +109,16 @@ fn write_sheets(
     tables = None, 
     charts = None,
     images = None,
+    gridlines_visible = true,
+    zoom_scale = None,
+    tab_color = None,
+    default_row_height = None,
+    hidden_columns = None,
+    hidden_rows = None,
+    right_to_left = false,
+    data_start_row = 0,
+    header_content = None,
 ))]
-
 /// Write Arrow data to an Excel file with advanced formatting options.
 /// 
 /// Args:
@@ -122,7 +130,11 @@ fn write_sheets(
 ///     freeze_cols (int): Number of columns to freeze
 ///     auto_width (bool): Auto-calculate column widths
 ///     styled_headers (bool): Apply bold+gray style to headers
-///     column_widths (dict[str, float], optional): Manual column widths by name
+///     write_header_row (bool): Write header row with column names
+///     column_widths (dict[str, str|float], optional): Column widths - accepts:
+///         - float/int: Excel character units (e.g., 15.5)
+///         - "150px": Pixel width (converted to characters)
+///         - "auto": Auto-calculate from data
 ///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
 ///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
 ///     data_validations (list[dict], optional): Data validation rules
@@ -132,7 +144,16 @@ fn write_sheets(
 ///     formulas (list[tuple], optional): List of (row, col, formula, cached_value)
 ///     conditional_formats (list[dict], optional): Conditional formatting rules
 ///     tables (list[dict], optional): Excel table definitions
-
+///     charts (list[dict], optional): Chart definitions
+///     images (list[dict], optional): Image definitions
+///     gridlines_visible (bool): Show gridlines (default: True)
+///     zoom_scale (int, optional): Zoom level 10-400%
+///     tab_color (str, optional): Sheet tab color in RGB format (e.g., "FFFF0000")
+///     default_row_height (float, optional): Default row height for all rows
+///     hidden_columns (list[int], optional): Column indices to hide
+///     hidden_rows (list[int], optional): Row indices to hide
+///     right_to_left (bool): Enable right-to-left layout (default: False)
+///     data_start_row (int): Skip this many rows when calculating auto_width (for dummy rows)
 #[allow(clippy::too_many_arguments)]
 fn write_sheet_arrow(
     py: Python,
@@ -145,7 +166,7 @@ fn write_sheet_arrow(
     auto_width: bool,
     styled_headers: bool,
     write_header_row: bool,
-    column_widths: Option<HashMap<String, f64>>,
+    column_widths: Option<HashMap<String, Bound<PyAny>>>,
     column_formats: Option<HashMap<String, String>>,
     merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
     data_validations: Option<Vec<Bound<PyDict>>>,
@@ -157,7 +178,17 @@ fn write_sheet_arrow(
     tables: Option<Vec<Bound<PyDict>>>,
     charts: Option<Vec<Bound<PyDict>>>,
     images: Option<Vec<Bound<PyDict>>>,
+    gridlines_visible: bool,
+    zoom_scale: Option<u16>,
+    tab_color: Option<String>,
+    default_row_height: Option<f64>,
+    hidden_columns: Option<Vec<usize>>,
+    hidden_rows: Option<Vec<usize>>,
+    right_to_left: bool,
+    data_start_row: usize,
+    header_content: Option<Vec<(usize, usize, String)>>
 ) -> PyResult<()> {
+    // Convert PyArrow data to RecordBatch
     let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
     let reader = any_batch.into_reader()?;
     
@@ -175,6 +206,32 @@ fn write_sheet_arrow(
 
     let name = sheet_name.unwrap_or_else(|| "Sheet1".to_string());
 
+    // Parse column_widths - supports float, "auto", or "150px"
+    let parsed_column_widths = column_widths.map(|cw| {
+        cw.into_iter()
+            .filter_map(|(k, v)| {
+                let width = if let Ok(s) = v.extract::<String>() {
+                    if s.to_lowercase() == "auto" {
+                        ColumnWidth::Auto
+                    } else if s.ends_with("px") {
+                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                        ColumnWidth::Pixels(px)
+                    } else {
+                        // Try parsing as number string
+                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                    }
+                } else if let Ok(f) = v.extract::<f64>() {
+                    ColumnWidth::Characters(f)
+                } else if let Ok(i) = v.extract::<i64>() {
+                    ColumnWidth::Characters(i as f64)
+                } else {
+                    return None;
+                };
+                Some((k, width))
+            })
+            .collect()
+    });
+
     // Build config
     let mut config = StyleConfig {
         auto_filter,
@@ -182,7 +239,7 @@ fn write_sheet_arrow(
         freeze_cols,
         styled_headers,
         write_header_row,
-        column_widths,
+        column_widths: parsed_column_widths,
         auto_width,
         column_formats: column_formats.map(|cf| {
             cf.into_iter()
@@ -204,7 +261,16 @@ fn write_sheet_arrow(
         tables: Vec::new(), 
         charts: Vec::new(),
         images: Vec::new(),
-    };
+        gridlines_visible,
+        zoom_scale,
+        tab_color,
+        default_row_height,
+        hidden_columns: hidden_columns.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        hidden_rows: hidden_rows.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        right_to_left,
+        data_start_row,
+        header_content: header_content.unwrap_or_default(),
+        };
 
     // Parse data validations
     if let Some(validations) = data_validations {
@@ -249,7 +315,7 @@ fn write_sheet_arrow(
         }
     }
 
-    // Charts
+    // Parse charts
     if let Some(charts_vec) = charts {
         for chart_dict in charts_vec {
             if let Ok(chart) = extract_chart(&chart_dict) {
@@ -258,7 +324,7 @@ fn write_sheet_arrow(
         }
     }
 
-    // Images
+    // Parse images
     if let Some(images_vec) = images {
         for image_dict in images_vec {
             if let Ok(image) = extract_image(&image_dict) {
@@ -266,15 +332,6 @@ fn write_sheet_arrow(
             }
         }
     }
-
-//     // Build DXF IDs for conditional formats
-//     if !config.conditional_formats.is_empty() {
-//         let mut temp_registry = StyleRegistry::new();
-//         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
-//             let dxf_id = temp_registry.register_dxf(&cond_format.style);
-//             config.cond_format_dxf_ids.insert(idx, dxf_id);
-//     }
-// }
 
     py.detach(|| {
         writer::write_single_sheet_arrow_with_config(&batches, &name, &filename, &config)
@@ -287,7 +344,7 @@ fn write_sheet_arrow(
 /// Write multiple Arrow tables to Excel with parallel processing.
 ///
 /// Args:
-///     arrow_sheets (list[tuple]): List of (arrow_data, sheet_name) tuples
+///     arrow_sheets (list[dict]): List of dicts with keys: data, name, and optional formatting params
 ///     filename (str): Output file path
 ///     num_threads (int): Number of parallel threads for XML generation
 fn write_sheets_arrow(
@@ -316,6 +373,7 @@ fn write_sheets_arrow(
         // Build config from optional parameters
         let mut config = StyleConfig::default();
         
+        // Basic options
         if let Some(auto_filter) = sheet_dict.get_item("auto_filter")?.and_then(|v| v.extract().ok()) {
             config.auto_filter = auto_filter;
         }
@@ -324,6 +382,43 @@ fn write_sheets_arrow(
         }
         if let Some(freeze_cols) = sheet_dict.get_item("freeze_cols")?.and_then(|v| v.extract().ok()) {
             config.freeze_cols = freeze_cols;
+        }
+        if let Some(auto_width) = sheet_dict.get_item("auto_width")?.and_then(|v| v.extract().ok()) {
+            config.auto_width = auto_width;
+        }
+        if let Some(styled_headers) = sheet_dict.get_item("styled_headers")?.and_then(|v| v.extract().ok()) {
+            config.styled_headers = styled_headers;
+        }
+        if let Some(write_header_row) = sheet_dict.get_item("write_header_row")?.and_then(|v| v.extract().ok()) {
+            config.write_header_row = write_header_row;
+        }
+
+        // Column widths - parse "auto", "150px", or float values
+        if let Some(widths) = sheet_dict.get_item("column_widths")? {
+            let widths_dict = widths.downcast::<PyDict>()?;
+            let parsed_widths: HashMap<String, ColumnWidth> = widths_dict.iter()
+                .filter_map(|(k, v)| {
+                    let col_name: String = k.extract().ok()?;
+                    let width = if let Ok(s) = v.extract::<String>() {
+                        if s.to_lowercase() == "auto" {
+                            ColumnWidth::Auto
+                        } else if s.ends_with("px") {
+                            let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                            ColumnWidth::Pixels(px)
+                        } else {
+                            ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                        }
+                    } else if let Ok(f) = v.extract::<f64>() {
+                        ColumnWidth::Characters(f)
+                    } else if let Ok(i) = v.extract::<i64>() {
+                        ColumnWidth::Characters(i as f64)
+                    } else {
+                        return None;
+                    };
+                    Some((col_name, width))
+                })
+                .collect();
+            config.column_widths = Some(parsed_widths);
         }
 
         // Extract column_formats
@@ -340,8 +435,102 @@ fn write_sheets_arrow(
             config.column_formats = Some(col_fmts);
         }
 
+        // Merge cells
+        if let Some(merge) = sheet_dict.get_item("merge_cells")? {
+            let merge_list = merge.downcast::<pyo3::types::PyList>()?;
+            for item in merge_list.iter() {
+                if let Ok(tuple) = item.extract::<(usize, usize, usize, usize)>() {
+                    config.merge_cells.push(MergeRange {
+                        start_row: tuple.0,
+                        start_col: tuple.1,
+                        end_row: tuple.2,
+                        end_col: tuple.3,
+                    });
+                }
+            }
+        }
 
+        // Data validations
+        if let Some(validations) = sheet_dict.get_item("data_validations")? {
+            let validations_list = validations.downcast::<pyo3::types::PyList>()?;
+            for val_dict in validations_list.iter() {
+                if let Ok(val_dict) = val_dict.downcast::<PyDict>() {
+                    if let Ok(validation) = extract_data_validation(&val_dict) {
+                        config.data_validations.push(validation);
+                    }
+                }
+            }
+        }
 
+        // Hyperlinks
+        if let Some(hyperlinks) = sheet_dict.get_item("hyperlinks")? {
+            let hyperlinks_list = hyperlinks.downcast::<pyo3::types::PyList>()?;
+            for item in hyperlinks_list.iter() {
+                if let Ok((row, col, url, display)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                    config.hyperlinks.push(Hyperlink { row, col, url, display });
+                }
+            }
+        }
+
+        // Row heights
+        if let Some(heights) = sheet_dict.get_item("row_heights")? {
+            let heights_dict = heights.downcast::<PyDict>()?;
+            let mut row_heights = HashMap::new();
+            for (key, value) in heights_dict.iter() {
+                let row: usize = key.extract()?;
+                let height: f64 = value.extract()?;
+                row_heights.insert(row, height);
+            }
+            config.row_heights = Some(row_heights);
+        }
+
+        // Cell styles
+        if let Some(styles) = sheet_dict.get_item("cell_styles")? {
+            let styles_list = styles.downcast::<pyo3::types::PyList>()?;
+            for style_dict in styles_list.iter() {
+                if let Ok(style_dict) = style_dict.downcast::<PyDict>() {
+                    if let Ok(cell_style) = extract_cell_style(&style_dict) {
+                        config.cell_styles.push(cell_style);
+                    }
+                }
+            }
+        }
+
+        // Formulas
+        if let Some(formulas) = sheet_dict.get_item("formulas")? {
+            let formulas_list = formulas.downcast::<pyo3::types::PyList>()?;
+            for item in formulas_list.iter() {
+                if let Ok((row, col, formula, cached_value)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                    config.formulas.push(Formula { row, col, formula, cached_value });
+                }
+            }
+        }
+
+        // Conditional formats
+        if let Some(cond_formats) = sheet_dict.get_item("conditional_formats")? {
+            let cond_list = cond_formats.downcast::<pyo3::types::PyList>()?;
+            for cond_dict in cond_list.iter() {
+                if let Ok(cond_dict) = cond_dict.downcast::<PyDict>() {
+                    if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                        config.conditional_formats.push(cond_format);
+                    }
+                }
+            }
+        }
+
+        // Tables
+        if let Some(tables_vec) = sheet_dict.get_item("tables")? {
+            let tables_list = tables_vec.downcast::<pyo3::types::PyList>()?;
+            for table_dict in tables_list.iter() {
+                if let Ok(table_dict) = table_dict.downcast::<PyDict>() {
+                    if let Ok(table) = extract_table(&table_dict) {
+                        config.tables.push(table);
+                    }
+                }
+            }
+        }
+
+        // Charts
         if let Some(charts_vec) = sheet_dict.get_item("charts")? {
             let charts_list = charts_vec.downcast::<pyo3::types::PyList>()?;
             for chart_dict in charts_list.iter() {
@@ -353,7 +542,7 @@ fn write_sheets_arrow(
             }
         }
 
-        // images
+        // Images
         if let Some(images_vec) = sheet_dict.get_item("images")? {
             let images_list = images_vec.downcast::<pyo3::types::PyList>()?;
             for image_dict in images_list.iter() {
@@ -363,6 +552,32 @@ fn write_sheets_arrow(
                     }
                 }
             }
+        }
+        
+        // Appearance options
+        if let Some(val) = sheet_dict.get_item("gridlines_visible")?.and_then(|v| v.extract().ok()) {
+            config.gridlines_visible = val;
+        }
+        if let Some(val) = sheet_dict.get_item("zoom_scale")?.and_then(|v| v.extract().ok()) {
+            config.zoom_scale = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("tab_color")?.and_then(|v| v.extract().ok()) {
+            config.tab_color = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("default_row_height")?.and_then(|v| v.extract().ok()) {
+            config.default_row_height = Some(val);
+        }
+        if let Some(val) = sheet_dict.get_item("hidden_columns")?.and_then(|v| v.extract().ok()) {
+            config.hidden_columns = val;
+        }
+        if let Some(val) = sheet_dict.get_item("hidden_rows")?.and_then(|v| v.extract().ok()) {
+            config.hidden_rows = val;
+        }
+        if let Some(val) = sheet_dict.get_item("right_to_left")?.and_then(|v| v.extract().ok()) {
+            config.right_to_left = val;
+        }
+        if let Some(val) = sheet_dict.get_item("data_start_row")?.and_then(|v| v.extract().ok()) {
+            config.data_start_row = val;
         }
         
         sheets_data.push((batches, name, config));
@@ -421,23 +636,22 @@ fn extract_column(py: Python, value: &Bound<PyAny>) -> PyResult<Vec<CellValue>> 
 fn parse_number_format(s: &str) -> Option<NumberFormat> {
     match s.to_lowercase().as_str() {
         "general" => Some(NumberFormat::General),
-        "integer" => Some(NumberFormat::Integer),
-        "decimal2" => Some(NumberFormat::Decimal2),
-        "decimal4" => Some(NumberFormat::Decimal4),
-        "percentage" => Some(NumberFormat::Percentage),
-        "percentage_decimal" => Some(NumberFormat::PercentageDecimal),
+        "integer" | "0" => Some(NumberFormat::Integer),
+        "decimal2" | "0.00" => Some(NumberFormat::Decimal2),
+        "decimal4" | "0.0000" => Some(NumberFormat::Decimal4),
+        "percentage" | "0%" => Some(NumberFormat::Percentage),
+        "percentage_decimal" | "0.00%" => Some(NumberFormat::PercentageDecimal),
         "percentage_integer" => Some(NumberFormat::PercentageInteger),
-        "currency" => Some(NumberFormat::Currency),
-        "currency_rounded" => Some(NumberFormat::CurrencyRounded),
+        "currency" | "$#,##0.00" => Some(NumberFormat::Currency),
+        "currency_rounded" | "$#,##0" => Some(NumberFormat::CurrencyRounded),
         "date" => Some(NumberFormat::Date),
-        "datetime" => Some(NumberFormat::DateTime),
-        "time" => Some(NumberFormat::Time),
-        "scientific" => Some(NumberFormat::Scientific),
-        "fraction" => Some(NumberFormat::Fraction),
-        "fraction_two_digits" => Some(NumberFormat::FractionTwoDigits),
-        "thousands" => Some(NumberFormat::ThousandsSeparator),
+        "datetime" | "yyyy-mm-dd hh:mm:ss" => Some(NumberFormat::DateTime),
+        "time" | "hh:mm:ss" => Some(NumberFormat::Time),
+        "scientific" | "0.00e+00" => Some(NumberFormat::Scientific),
+        "fraction" | "# ?/?" => Some(NumberFormat::Fraction),
+        "fraction_two_digits" | "# ??/??" => Some(NumberFormat::FractionTwoDigits),
+        "thousands" | "#,##0" => Some(NumberFormat::ThousandsSeparator),
         _ => {
-            // Treat unknown strings as custom format codes
             if s.is_empty() {
                 None
             } else {
@@ -740,12 +954,43 @@ fn jetxl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+// fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
+//     let name: String = dict.get_item("name")?.unwrap().extract()?;
+//     let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
+//     let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+//     let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
+//     let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+//     let mut table = ExcelTable::new(name, (start_row, start_col, end_row, end_col));
+    
+//     if let Some(display_name) = dict.get_item("display_name")?.and_then(|v| v.extract().ok()) {
+//         table.display_name = display_name;
+//     }
+    
+//     if let Some(style) = dict.get_item("style")?.and_then(|v| v.extract().ok()) {
+//         table.style_name = Some(style);
+//     }
+    
+//     table.show_first_column = dict.get_item("show_first_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+//     table.show_last_column = dict.get_item("show_last_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+//     table.show_row_stripes = dict.get_item("show_row_stripes")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+//     table.show_column_stripes = dict.get_item("show_column_stripes")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    
+//     Ok(table)
+// }
+
 fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
     let name: String = dict.get_item("name")?.unwrap().extract()?;
     let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
     let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+    // Make end_row and end_col optional - extract as Option<i64> to allow None or -1
+    let end_row_opt: Option<i64> = dict.get_item("end_row")?.and_then(|v| v.extract().ok());
+    let end_col_opt: Option<i64> = dict.get_item("end_col")?.and_then(|v| v.extract().ok());
+    
+    // Use sentinel value of 0 for now, will be calculated in writer
+    let end_row = end_row_opt.filter(|&v| v >= 0).map(|v| v as usize).unwrap_or(0);
+    let end_col = end_col_opt.filter(|&v| v >= 0).map(|v| v as usize).unwrap_or(0);
     
     let mut table = ExcelTable::new(name, (start_row, start_col, end_row, end_col));
     

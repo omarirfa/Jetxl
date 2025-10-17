@@ -44,8 +44,9 @@ pub fn write_single_sheet_with_config(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet.name.as_str()];
     let charts_count = vec![config.charts.len()];
+    let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
     
-    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count, &[(vec![], 0)]);
+    add_static_files(&mut zipper, &sheet_names, None, &[0], &charts_count, &[(vec![], drawing_count)]);
     
     let xml_data = xml::generate_sheet_xml_from_dict(sheet, config)?;
     zipper
@@ -165,21 +166,22 @@ pub fn write_single_sheet_arrow_with_config(
 
     let schema = batches[0].schema();
     let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
-        schema.fields().iter().enumerate()
-            .filter_map(|(idx, field)| {
-                formats.get(field.name()).map(|fmt| {
-                    let cell_style = CellStyle {
-                        font: None,
-                        fill: None,
-                        border: None,
-                        alignment: None,
-                        number_format: Some(fmt.clone()),
-                    };
-                    let style_id = registry.register_cell_style(&cell_style);
-                    (idx, style_id)
-                })
-            })
-            .collect()
+        let mut map = HashMap::new();
+        for (idx, field) in schema.fields().iter().enumerate() {
+            if let Some(fmt) = formats.get(field.name()) {
+                let cell_style = CellStyle {
+                    font: None,
+                    fill: None,
+                    border: None,
+                    alignment: None,
+                    number_format: Some(fmt.clone()),
+                };
+                let style_id = registry.register_cell_style(&cell_style)
+                    .map_err(|e| WriteError::Validation(e))?;
+                map.insert(idx, style_id);
+            }
+        }
+        map
     } else {
         HashMap::new()
     };
@@ -187,7 +189,8 @@ pub fn write_single_sheet_arrow_with_config(
     // Build cell style map - register and map user's custom cell styles
     let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
     for cell_style in &config.cell_styles {
-        let style_id = registry.register_cell_style(&cell_style.style);
+        let style_id = registry.register_cell_style(&cell_style.style)
+            .map_err(|e| WriteError::Validation(e))?;
         cell_style_map.insert((cell_style.row, cell_style.col), style_id);
     }
 
@@ -196,7 +199,8 @@ pub fn write_single_sheet_arrow_with_config(
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                    registry.register_cell_style(&cond_format.style);
+                    registry.register_cell_style(&cond_format.style)
+                        .map_err(|e| WriteError::Validation(e))?;
                     let dxf_id = registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
@@ -209,17 +213,20 @@ pub fn write_single_sheet_arrow_with_config(
     let mut zipper = ZipArchive::new();
     let sheet_names = vec![sheet_name];
     let charts_count = vec![config.charts.len()];
-    let images_data = vec![(config.images.clone(), if config.images.is_empty() { 0 } else { 1 })];
+    // let images_data = vec![(config.images.clone(), if config.images.is_empty() { 0 } else { 1 })];
+    let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
+    let images_data = vec![(config.images.clone(), drawing_count)];
     
+
     add_static_files(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count, &images_data);
     
     let xml_data = xml::generate_sheet_xml_from_arrow(batches, &updated_config, &col_format_map, &cell_style_map)?;
     
     // DEBUG: Check for leading garbage
-    if xml_data.len() > 0 {
-        eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
-        eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
-    }
+    // if xml_data.len() > 0 {
+    //     eprintln!("First 100 bytes: {:?}", &xml_data[..xml_data.len().min(100)]);
+    //     eprintln!("Starts with '<?xml': {}", xml_data.starts_with(b"<?xml"));
+    // }
 
     
     zipper
@@ -259,18 +266,37 @@ pub fn write_single_sheet_arrow_with_config(
     }
     
     if !config.tables.is_empty() {
+        // Calculate total rows once for all tables
+        let total_data_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let num_cols = if !batches.is_empty() { batches[0].schema().fields().len() } else { 0 };
+        
         for (idx, table) in config.tables.iter().enumerate() {
             let table_id = (idx + 1) as u32;
             
-            // If table starts after row 1, we inserted a header row, so adjust end_row
             let mut adjusted_table = table.clone();
-            if adjusted_table.range.0 > 1 {
+            
+            // Auto-calculate end_row if not specified (0 means auto)
+            if adjusted_table.range.2 == 0 {
+                // end_row = start_row + num_data_rows - 1 (inclusive)
+                adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
+            }
+            
+            // Auto-calculate end_col if not specified (0 means auto)
+            if adjusted_table.range.3 == 0 {
+                if num_cols > 0 {
+                    adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
+                }
+            }
+            
+            // If table starts after row 1, we inserted a header row, so adjust end_row
+            // Only adjust if user manually specified end_row (not auto-calculated)
+            if adjusted_table.range.0 > 1 && table.range.2 != 0 {
                 adjusted_table.range.2 += 1; // end_row++
             }
             
             let col_names = if table.column_names.is_empty() && !batches.is_empty() {
                 let schema = batches[0].schema();
-                let (_, start_col, _, end_col) = table.range;
+                let (_, start_col, _, end_col) = adjusted_table.range;
                 schema.fields()[start_col..=end_col]
                     .iter()
                     .map(|f| f.name().clone())
@@ -290,7 +316,7 @@ pub fn write_single_sheet_arrow_with_config(
         }
     }
     
-    let has_drawing = !config.charts.is_empty() || !config.images.is_empty();;
+    let has_drawing = !config.charts.is_empty() || !config.images.is_empty();
     
     if has_drawing {
         let drawing_xml = generate_drawing_xml_combined(&config.charts, &config.images);
@@ -359,31 +385,30 @@ pub fn write_multiple_sheets_arrow_with_configs(
 
     for (batches, _, config) in sheets {
         let schema = batches[0].schema();
-        let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
-            schema.fields().iter().enumerate()
-                .filter_map(|(idx, field)| {
-                    formats.get(field.name()).map(|fmt| {
-                        let cell_style = CellStyle {
-                            font: None,
-                            fill: None,
-                            border: None,
-                            alignment: None,
-                            number_format: Some(fmt.clone()),
-                        };
-                        let style_id = style_registry.register_cell_style(&cell_style);
-                        (idx, style_id)
-                    })
-                })
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let mut col_format_map = HashMap::new();
+        if let Some(formats) = &config.column_formats {
+            for (idx, field) in schema.fields().iter().enumerate() {
+                if let Some(fmt) = formats.get(field.name()) {
+                    let cell_style = CellStyle {
+                        font: None,
+                        fill: None,
+                        border: None,
+                        alignment: None,
+                        number_format: Some(fmt.clone()),
+                    };
+                    let style_id = style_registry.register_cell_style(&cell_style)
+                        .map_err(|e| WriteError::Validation(e))?;
+                    col_format_map.insert(idx, style_id);
+                }
+            }
+        }
         sheet_col_format_maps.push(col_format_map);
 
         // Build cell style map for this sheet
         let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
         for cell_style in &config.cell_styles {
-            let style_id = style_registry.register_cell_style(&cell_style.style);
+            let style_id = style_registry.register_cell_style(&cell_style.style)
+                .map_err(|e| WriteError::Validation(e))?;
             cell_style_map.insert((cell_style.row, cell_style.col), style_id);
         }
         sheet_cell_style_maps.push(cell_style_map);
@@ -392,7 +417,8 @@ pub fn write_multiple_sheets_arrow_with_configs(
         for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
-                    style_registry.register_cell_style(&cond_format.style);
+                    style_registry.register_cell_style(&cond_format.style)
+                        .map_err(|e| WriteError::Validation(e))?;
                     let dxf_id = style_registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
@@ -460,12 +486,13 @@ pub fn write_multiple_sheets_arrow_with_configs(
     let charts_per_sheet: Vec<usize> = sheets.iter().map(|(_, _, cfg)| cfg.charts.len()).collect();
 
     let images_per_sheet: Vec<(Vec<ExcelImage>, usize)> = sheets.iter()
-        .map(|(_, _, cfg)| {
-            let count = if cfg.images.is_empty() { 0 } else { 1 };
-            (cfg.images.clone(), count)
-    })
-    .collect();
-add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet, &images_per_sheet);
+            .map(|(_, _, cfg)| {
+                // count drawing if charts OR images exist
+                let count = if cfg.charts.is_empty() && cfg.images.is_empty() { 0 } else { 1 };
+                (cfg.images.clone(), count)
+            })
+            .collect();
+    add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_sheet, &charts_per_sheet, &images_per_sheet);
 
     let mut global_chart_id = 1;
     let mut global_table_id = 1;
@@ -514,10 +541,39 @@ add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_s
         }
         
         if has_tables {
+            // Calculate total rows and cols for this sheet
+            let total_data_rows: usize = sheets[idx].0.iter().map(|b| b.num_rows()).sum();
+            let num_cols = if !sheets[idx].0.is_empty() { 
+                sheets[idx].0[0].schema().fields().len() 
+            } else { 
+                0 
+            };
+            
             for table in &sheet_config.tables {
+                let mut adjusted_table = table.clone();
+                
+                // Auto-calculate end_row if not specified (0 means auto)
+                if adjusted_table.range.2 == 0 {
+                    // end_row = start_row + num_data_rows - 1 (inclusive)
+                    adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
+                }
+                
+                // Auto-calculate end_col if not specified (0 means auto)
+                if adjusted_table.range.3 == 0 {
+                    if num_cols > 0 {
+                        adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
+                    }
+                }
+                
+                // If table starts after row 1, we inserted a header row, so adjust end_row
+                // Only adjust if user manually specified end_row (not auto-calculated)
+                if adjusted_table.range.0 > 1 && table.range.2 != 0 {
+                    adjusted_table.range.2 += 1; // end_row++
+                }
+                
                 let col_names = if table.column_names.is_empty() && !sheets[idx].0.is_empty() {
                     let schema = sheets[idx].0[0].schema();
-                    let (_, start_col, _, end_col) = table.range;
+                    let (_, start_col, _, end_col) = adjusted_table.range;
                     schema.fields()[start_col..=end_col]
                         .iter()
                         .map(|f| f.name().clone())
@@ -526,7 +582,7 @@ add_static_files(&mut zipper, &sheet_names, Some(&style_registry), &tables_per_s
                     table.column_names.clone()
                 };
                 
-                let table_xml = xml::generate_table_xml(table, global_table_id as u32, &col_names);
+                let table_xml = xml::generate_table_xml(&adjusted_table, global_table_id as u32, &col_names);
                 zipper
                     .add_file_from_memory(
                         table_xml.into_bytes(),

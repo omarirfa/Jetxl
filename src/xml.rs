@@ -249,11 +249,13 @@ pub fn generate_content_types_with_charts(
         }
     }
     
-    for (i, &(_, drawing_count)) in images_per_sheet.iter().enumerate() {
+    let mut drawing_id = 1;
+    for &(_, drawing_count) in images_per_sheet {
         if drawing_count > 0 {
             xml.push_str("<Override PartName=\"/xl/drawings/drawing");
-            xml.push_str(&(i + 1).to_string());
+            xml.push_str(&drawing_id.to_string()); // Use drawing_id, not sheet index
             xml.push_str(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>");
+            drawing_id += 1;
         }
     }
 
@@ -1206,6 +1208,13 @@ pub fn generate_sheet_xml_from_arrow(
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
 
+    // SheetPr (tab color - must come before dimension)
+    if let Some(ref color) = config.tab_color {
+        buf.extend_from_slice(b"<sheetPr><tabColor rgb=\"");
+        buf.extend_from_slice(color.as_bytes());
+        buf.extend_from_slice(b"\"/></sheetPr>");
+    }
+
     // Dimension
     buf.extend_from_slice(b"<dimension ref=\"");
     if total_rows > 0 {
@@ -1221,8 +1230,26 @@ pub fn generate_sheet_xml_from_arrow(
     }
     buf.extend_from_slice(b"\"/>");
 
-    // SheetViews (with optional freeze panes)
+    // SheetViews (with gridlines, zoom, RTL, and optional freeze panes)
     buf.extend_from_slice(b"<sheetViews><sheetView workbookViewId=\"0\"");
+    
+    // Add showGridLines if disabled
+    if !config.gridlines_visible {
+        buf.extend_from_slice(b" showGridLines=\"0\"");
+    }
+    
+    // Add zoom scale
+    if let Some(zoom) = config.zoom_scale {
+        buf.extend_from_slice(b" zoomScale=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(zoom).as_bytes());
+        buf.push(b'\"');
+    }
+    
+    // Add right-to-left
+    if config.right_to_left {
+        buf.extend_from_slice(b" rightToLeft=\"1\"");
+    }
+    
     if config.freeze_rows > 0 || config.freeze_cols > 0 {
         buf.push(b'>');
         buf.extend_from_slice(b"<pane ");
@@ -1247,26 +1274,40 @@ pub fn generate_sheet_xml_from_arrow(
         buf.extend_from_slice(b"/></sheetViews>");
     }
 
-    // SheetFormatPr (optional custom row heights)
-    if config.row_heights.is_some() {
-        buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"15\"/>");
+    // SheetFormatPr (default row height)
+    buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"");
+    let default_height = config.default_row_height.unwrap_or(15.0);
+    buf.extend_from_slice(ryu::Buffer::new().format(default_height).as_bytes());
+    buf.push(b'\"');
+    if config.default_row_height.is_some() {
+        buf.extend_from_slice(b" customHeight=\"1\"");
     }
+    buf.extend_from_slice(b"/>");
 
-    // Cols (column widths)
-    if config.auto_width || config.column_widths.is_some() {
+    // Cols (column widths and hidden columns)
+    if config.auto_width || config.column_widths.is_some() || !config.hidden_columns.is_empty() {
         buf.extend_from_slice(b"<cols>");
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let width = if let Some(widths) = &config.column_widths {
-                widths.get(field.name()).copied().unwrap_or_else(|| {
-                    if config.auto_width && !batches.is_empty() {
-                        calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                             field.name(), 100)
-                    } else { 8.43 }
-                })
-            } else if config.auto_width && !batches.is_empty() {
-                calculate_column_width(batches[0].column(col_idx).as_ref(), 
-                                     field.name(), 100)
+                if let Some(col_width) = widths.get(field.name()) {
+                    match col_width {
+                        ColumnWidth::Characters(w) => *w,
+                        ColumnWidth::Pixels(px) => px / 7.0,  // Calibri 11pt MDW
+                        ColumnWidth::Auto => calculate_column_width(
+                            batches[0].column(col_idx).as_ref(),
+                            field.name(), 100, config.data_start_row
+                        ),
+                    }
+                } else if config.auto_width {
+                    calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                        field.name(), 100, config.data_start_row)
+                } else {
+                    8.43
+                }
+            } else if config.auto_width {
+                calculate_column_width(batches[0].column(col_idx).as_ref(),
+                                    field.name(), 100, config.data_start_row)
             } else {
                 8.43
             };
@@ -1277,11 +1318,19 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(itoa::Buffer::new().format(col_idx + 1).as_bytes());
             buf.extend_from_slice(b"\" width=\"");
             buf.extend_from_slice(ryu::Buffer::new().format(width).as_bytes());
-            buf.extend_from_slice(b"\" customWidth=\"1\"/>");
+            buf.extend_from_slice(b"\" customWidth=\"1\"");
+            
+            // Hidden column
+            if config.hidden_columns.contains(&col_idx) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.extend_from_slice(b"/>");
         }
         
         buf.extend_from_slice(b"</cols>");
     }
+
 
     // SheetData (all cell data)
     buf.extend_from_slice(b"<sheetData>");
@@ -1309,17 +1358,95 @@ pub fn generate_sheet_xml_from_arrow(
         .map(|f| ((f.row, f.col), f))
         .collect();
 
+    // Determine where DataFrame data actually starts
+    let data_start = if config.write_header_row { 
+        config.data_start_row.max(1) 
+    } else { 
+        config.data_start_row 
+    };
 
-    // Write header row (row 1) - only if enabled
+    // Write header_content rows (arbitrary content before DataFrame data)
+    if !config.header_content.is_empty() {
+        let mut rows_map: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
+        for (row, col, text) in &config.header_content {
+            rows_map.entry(*row).or_insert_with(Vec::new).push((*col, text.clone()));
+        }
+        
+        let mut sorted_rows: Vec<_> = rows_map.keys().copied().collect();
+        sorted_rows.sort();
+        
+        for row_num in sorted_rows {
+            if row_num >= data_start { break; }
+            
+            let row_str = int_buf.format(row_num);
+            let row_bytes = row_str.as_bytes();
+            
+            // Start row tag with row number
+            buf.extend_from_slice(b"<row r=\"");
+            buf.extend_from_slice(row_bytes);
+            buf.push(b'\"');  // CRITICAL: Always close the r attribute
+            
+            // Add optional row height
+            if let Some(heights) = &config.row_heights {
+                if let Some(height) = heights.get(&row_num) {
+                    buf.extend_from_slice(b" ht=\"");  // Note: leading space for separate attribute
+                    buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                    buf.extend_from_slice(b"\" customHeight=\"1\"");
+                }
+            }
+            
+            // Add hidden attribute if needed
+            if config.hidden_rows.contains(&row_num) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.push(b'>');  // Close row opening tag
+            
+            // Write cells in this row
+            if let Some(cells) = rows_map.get(&row_num) {
+                for (col_idx, text) in cells {
+                    let (col_letter, col_len) = &col_letters[*col_idx];
+                    
+                    // Cell reference (e.g., "A2")
+                    buf.extend_from_slice(b"<c r=\"");
+                    buf.extend_from_slice(&col_letter[..*col_len]);
+                    buf.extend_from_slice(row_bytes);
+                    buf.push(b'\"');  // Close r attribute
+                    
+                    // Apply custom cell style if defined
+                    if let Some(style_id) = cell_style_map.get(&(row_num, *col_idx)) {
+                        buf.extend_from_slice(b" s=\"");
+                        buf.extend_from_slice(itoa::Buffer::new().format(*style_id).as_bytes());
+                        buf.push(b'\"');  // Close s attribute
+                    }
+                    
+                    // Write inline string content
+                    buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
+                    xml_escape_simd(text.as_bytes(), &mut buf);
+                    buf.extend_from_slice(b"</t></is></c>");
+                }
+            }
+            
+            buf.extend_from_slice(b"</row>");
+        }
+    }
+
+    // Write DataFrame header row at data_start (only if enabled)
     if config.write_header_row {
-        let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&1));
-        buf.extend_from_slice(b"<row r=\"1\"");
+        let header_row_height = config.row_heights.as_ref().and_then(|h| h.get(&data_start));
+        buf.extend_from_slice(b"<row r=\"");
+        buf.extend_from_slice(itoa::Buffer::new().format(data_start).as_bytes());
+        buf.push(b'\"');
         if let Some(height) = header_row_height {
             buf.extend_from_slice(b" ht=\"");
             buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
             buf.extend_from_slice(b"\" customHeight=\"1\"");
         }
-        buf.extend_from_slice(b">");
+        // Hidden row check for header
+        if config.hidden_rows.contains(&data_start) {
+            buf.extend_from_slice(b" hidden=\"1\"");
+        }
+        buf.push(b'>');
         
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let (col_letter, col_len) = &col_letters[col_idx];
@@ -1328,20 +1455,37 @@ pub fn generate_sheet_xml_from_arrow(
             
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(&col_letter[..*col_len]);
-            buf.extend_from_slice(b"1\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(data_start).as_bytes());
             if style_id > 0 {
-                buf.extend_from_slice(b" s=\"");
+                buf.extend_from_slice(b"\" s=\"");
                 buf.extend_from_slice(int_buf.format(style_id).as_bytes());
-                buf.extend_from_slice(b"\"");
             }
-            buf.extend_from_slice(b" t=\"inlineStr\"><is><t>");
+            buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
             xml_escape_simd(field.name().as_bytes(), &mut buf);
             buf.extend_from_slice(b"</t></is></c>");
         }
         buf.extend_from_slice(b"</row>");
     }
 
-    let mut current_row = if config.write_header_row { 2 } else { 1 };
+    let mut current_row = if config.write_header_row { data_start + 1 } else { data_start };
+    
+    // Build map of table header rows that need to be inserted
+    let mut table_header_rows: HashMap<usize, (usize, usize)> = HashMap::new();
+    let mut num_inserted_headers = 0;
+    for table in &config.tables {
+        let (start_row, start_col, _, end_col) = table.range;
+        // Only insert header if table starts after data_start and doesn't already have a header
+        if start_row > data_start {
+            table_header_rows.insert(start_row, (start_col, end_col));
+            num_inserted_headers += 1;
+        }
+    }
+    
+    
+    // Cache feature flags to avoid repeated checks
+    let has_table_headers = !table_header_rows.is_empty();
+    let has_row_heights = config.row_heights.is_some();
+    let has_hidden_rows = !config.hidden_rows.is_empty();
     
     // Write data rows (with optional table header insertion)
     for batch in batches {
@@ -1349,50 +1493,54 @@ pub fn generate_sheet_xml_from_arrow(
         
         for row_idx in 0..batch_rows {
             // Check if we need to insert table header row before this data row
-            if let Some(&(start_col, end_col)) = table_header_rows.get(&current_row) {
-                let row_str = int_buf.format(current_row);
-                let row_bytes = row_str.as_bytes();
-                
-                buf.extend_from_slice(b"<row r=\"");
-                buf.extend_from_slice(row_bytes);
-                buf.extend_from_slice(b"\"");
-                
-                if let Some(heights) = &config.row_heights {
-                    if let Some(height) = heights.get(&current_row) {
-                        buf.extend_from_slice(b" ht=\"");
-                        buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
-                        buf.extend_from_slice(b"\" customHeight=\"1\"");
+            if has_table_headers {
+                if let Some(&(start_col, end_col)) = table_header_rows.get(&current_row) {
+                    let row_str = int_buf.format(current_row);
+                    let row_bytes = row_str.as_bytes();
+                    
+                    buf.extend_from_slice(b"<row r=\"");
+                    buf.extend_from_slice(row_bytes);
+                    buf.push(b'\"');
+                    
+                    if has_row_heights {
+                        if let Some(height) = config.row_heights.as_ref().unwrap().get(&current_row) {
+                            buf.extend_from_slice(b" ht=\"");
+                            buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                            buf.extend_from_slice(b"\" customHeight=\"1\"");
+                        }
                     }
-                }
-                
-                buf.extend_from_slice(b">");
-                
-                // Write header cells for table columns
-                for col_idx in start_col..=end_col {
-                    let (col_letter, col_len) = &col_letters[col_idx];
-                    let field_name = schema.fields()[col_idx].name();
                     
-                    // Create fresh buffer for this cell
-                    let mut header_cell_ref = Vec::with_capacity(16);
-                    header_cell_ref.extend_from_slice(&col_letter[..*col_len]);
-                    header_cell_ref.extend_from_slice(row_bytes);
-                    
-                    // Check for custom style on header cell
-                    let custom_style_id = cell_style_map.get(&(current_row, col_idx)).copied();
-                    
-                    buf.extend_from_slice(b"<c r=\"");
-                    buf.extend_from_slice(&header_cell_ref);
-                    if let Some(sid) = custom_style_id {
-                        buf.extend_from_slice(b"\" s=\"");
-                        buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+                    if has_hidden_rows && config.hidden_rows.contains(&current_row) {
+                        buf.extend_from_slice(b" hidden=\"1\"");
                     }
-                    buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
-                    xml_escape_simd(field_name.as_bytes(), &mut buf);
-                    buf.extend_from_slice(b"</t></is></c>");
+                    
+                    buf.push(b'>');
+                    
+                    // Write header cells for table columns
+                    for col_idx in start_col..=end_col {
+                        let (col_letter, col_len) = &col_letters[col_idx];
+                        let field_name = schema.fields()[col_idx].name();
+                        
+                        let mut header_cell_ref = Vec::with_capacity(16);
+                        header_cell_ref.extend_from_slice(&col_letter[..*col_len]);
+                        header_cell_ref.extend_from_slice(row_bytes);
+                        
+                        let custom_style_id = cell_style_map.get(&(current_row, col_idx)).copied();
+                        
+                        buf.extend_from_slice(b"<c r=\"");
+                        buf.extend_from_slice(&header_cell_ref);
+                        if let Some(sid) = custom_style_id {
+                            buf.extend_from_slice(b"\" s=\"");
+                            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+                        }
+                        buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
+                        xml_escape_simd(field_name.as_bytes(), &mut buf);
+                        buf.extend_from_slice(b"</t></is></c>");
+                    }
+                    
+                    buf.extend_from_slice(b"</row>");
+                    current_row += 1;
                 }
-                
-                buf.extend_from_slice(b"</row>");
-                current_row += 1;
             }
             
             // Write actual data row
@@ -1402,17 +1550,21 @@ pub fn generate_sheet_xml_from_arrow(
 
             buf.extend_from_slice(b"<row r=\"");
             buf.extend_from_slice(row_bytes);
-            buf.extend_from_slice(b"\"");
+            buf.push(b'\"');
             
-            if let Some(heights) = &config.row_heights {
-                if let Some(height) = heights.get(&row_num) {
+            if has_row_heights {
+                if let Some(height) = config.row_heights.as_ref().unwrap().get(&row_num) {
                     buf.extend_from_slice(b" ht=\"");
                     buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
                     buf.extend_from_slice(b"\" customHeight=\"1\"");
                 }
             }
             
-            buf.extend_from_slice(b">");
+            if has_hidden_rows && config.hidden_rows.contains(&row_num) {
+                buf.extend_from_slice(b" hidden=\"1\"");
+            }
+            
+            buf.push(b'>');
 
             for col_idx in 0..num_cols {
                 let array = batch.column(col_idx);
@@ -1452,8 +1604,13 @@ pub fn generate_sheet_xml_from_arrow(
 
     buf.extend_from_slice(b"</sheetData>");
 
+    // AutoFilter - only if no table covers the entire range from A1
+    let has_full_table = config.tables.iter().any(|t| {
+        let (start_row, start_col, end_row, end_col) = t.range;
+        start_row == 1 && start_col == 0 && end_row >= total_rows && end_col >= num_cols - 1
+    });
     // AutoFilter
-    if config.auto_filter && total_rows > 0 {
+    if config.auto_filter && total_rows > 0 && !has_full_table {
         buf.extend_from_slice(b"<autoFilter ref=\"A1:");
         let mut col_buf = [0u8; 4];
         let col_len = write_col_letter(num_cols - 1, &mut col_buf);
@@ -1765,6 +1922,11 @@ fn write_arrow_cell_to_xml_optimized(
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
             
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
+
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
             if let Some(sid) = style_id {
@@ -1783,6 +1945,11 @@ fn write_arrow_cell_to_xml_optimized(
             let start = offsets[row_idx] as usize;
             let end = offsets[row_idx + 1] as usize;
             let str_bytes = &values.as_ref()[start..end];
+
+            // Skip empty strings entirely to allow text overflow
+            if str_bytes.is_empty() && style_id.is_none() && hyperlink.is_none() && formula.is_none() {
+                return Ok(());
+            }
             
             buf.extend_from_slice(b"<c r=\"");
             buf.extend_from_slice(cell_ref);
@@ -1854,14 +2021,14 @@ fn write_arrow_cell_to_xml_optimized(
                 .checked_add_signed(chrono::Duration::days(days as i64))
                 .ok_or_else(|| WriteError::Validation("Date out of range".to_string()))?;
             let dt = date.and_hms_opt(0, 0, 0).unwrap();
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(10)), buf, ryu_buf);
         }
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             let millis = arr.value(row_idx);
             let datetime = chrono::DateTime::from_timestamp_millis(millis)
                 .ok_or_else(|| WriteError::Validation("Invalid timestamp".to_string()))?;
-            write_date_cell(&datetime.naive_utc(), cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&datetime.naive_utc(), cell_ref, style_id.or(Some(10)), buf, ryu_buf); // Date-only format
         }
        DataType::Time32(unit) => {
             use arrow_schema::TimeUnit;
@@ -1876,8 +2043,8 @@ fn write_arrow_cell_to_xml_optimized(
                 }
                 _ => 0.0,
             };
-            // let time_fraction = seconds / 86400.0;
-            // write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
+            let time_fraction = seconds / 86400.0;
+            write_number_cell(time_fraction, cell_ref, style_id, buf, ryu_buf, int_buf);
         }
         DataType::Time64(unit) => {
             use arrow_schema::TimeUnit;
@@ -1929,7 +2096,7 @@ fn write_arrow_cell_to_xml_optimized(
                         .naive_utc()
                 }
             };
-            write_date_cell(&dt, cell_ref, style_id, buf, ryu_buf);
+            write_date_cell(&dt, cell_ref, style_id.or(Some(1)), buf, ryu_buf);
         }
         _ => {
             buf.extend_from_slice(b"<c r=\"");
@@ -1973,6 +2140,19 @@ fn write_number_cell(
     ryu_buf: &mut ryu::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
+
+    // Excel can't handle NaN or inf - write empty cell instead
+    if !n.is_finite() {
+        buf.extend_from_slice(b"<c r=\"");
+        buf.extend_from_slice(cell_ref);
+        if let Some(sid) = style_id {
+            buf.extend_from_slice(b"\" s=\"");
+            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+        }
+        buf.extend_from_slice(b"\"/>");
+        return;
+    }
+
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
     if let Some(sid) = style_id {
