@@ -954,12 +954,43 @@ fn jetxl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+// fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
+//     let name: String = dict.get_item("name")?.unwrap().extract()?;
+//     let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
+//     let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+//     let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
+//     let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+//     let mut table = ExcelTable::new(name, (start_row, start_col, end_row, end_col));
+    
+//     if let Some(display_name) = dict.get_item("display_name")?.and_then(|v| v.extract().ok()) {
+//         table.display_name = display_name;
+//     }
+    
+//     if let Some(style) = dict.get_item("style")?.and_then(|v| v.extract().ok()) {
+//         table.style_name = Some(style);
+//     }
+    
+//     table.show_first_column = dict.get_item("show_first_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+//     table.show_last_column = dict.get_item("show_last_column")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+//     table.show_row_stripes = dict.get_item("show_row_stripes")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+//     table.show_column_stripes = dict.get_item("show_column_stripes")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    
+//     Ok(table)
+// }
+
 fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
     let name: String = dict.get_item("name")?.unwrap().extract()?;
     let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
     let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    
+    // Make end_row and end_col optional - extract as Option<i64> to allow None or -1
+    let end_row_opt: Option<i64> = dict.get_item("end_row")?.and_then(|v| v.extract().ok());
+    let end_col_opt: Option<i64> = dict.get_item("end_col")?.and_then(|v| v.extract().ok());
+    
+    // Use sentinel value of 0 for now, will be calculated in writer
+    let end_row = end_row_opt.filter(|&v| v >= 0).map(|v| v as usize).unwrap_or(0);
+    let end_col = end_col_opt.filter(|&v| v >= 0).map(|v| v as usize).unwrap_or(0);
     
     let mut table = ExcelTable::new(name, (start_row, start_col, end_row, end_col));
     

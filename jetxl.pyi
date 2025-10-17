@@ -723,8 +723,27 @@ class ExcelTable(TypedDict, total=False):
         show_header_row: Show header row with filter dropdowns (optional, default: True)
         show_totals_row: Add totals row at bottom (optional, default: False)
         column_names: Custom column names (optional, auto-detected from data if not provided)
+
+     
+    Auto-Calculation:
+        If end_row is 0 or omitted, it's automatically calculated as:
+            start_row + total_data_rows
         
-    
+        If end_col is 0 or omitted, it's automatically calculated as:
+            start_col + num_columns - 1
+        
+        This allows tables to adapt to your DataFrame size without manual counting.    
+
+    Example - Auto-sized table:
+        >>> table = {
+        ...     "name": "SalesData",
+        ...     "start_row": 1,
+        ...     "start_col": 0,
+        ...     "end_row": 0,      # Auto: will use all data rows
+        ...     "end_col": 0       # Auto: will use all columns
+        ... }
+        
+
     Available Table Styles:
         Light Styles: TableStyleLight1 through TableStyleLight21
         Medium Styles: TableStyleMedium1 through TableStyleMedium28
@@ -1075,7 +1094,8 @@ def write_sheet_arrow(
     hidden_columns: Optional[List[int]] = None,  
     hidden_rows: Optional[List[int]] = None,     
     right_to_left: bool = False,                 
-    data_start_row: int = 0,                     
+    data_start_row: int = 0,        
+    header_content: Optional[List[Tuple[int, int, str]]] = None,             
 ) -> None:
     """Write Arrow data to Excel with advanced formatting.
     
@@ -1117,6 +1137,10 @@ def write_sheet_arrow(
         hidden_rows: List of row indices to hide (1-based)
         right_to_left: Enable right-to-left worksheet layout
         data_start_row: Skip this many rows when auto-calculating column widths
+        header_content: Optional[List[Tuple[int, int, str]]] - Arbitrary text content to write before data rows.
+        Each tuple is (row, col, text). Useful for titles, metadata, or template headers.
+        These rows are written BEFORE the DataFrame data and headers.
+        Example: [(1, 0, "Company Report"), (2, 0, "Q4 2024")]
     
     Examples:
         Basic Usage (Polars):

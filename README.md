@@ -666,42 +666,85 @@ Common colors: `FFFF0000` (red), `FF00FF00` (green), `FF0000FF` (blue), `FFFFFF0
 
 For more colors and an interactive picker, see the [External Resources](#-external-resources--references) section below.
 
-## 📊 Excel Tables
+### Excel Tables
 
 Create formatted Excel tables with built-in styles, sorting, and filtering capabilities.
 
 ### Basic Table
+```python
+tables = [{
+    "name": "ProductTable",
+    "display_name": "Product Data",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 0,      # NEW: 0 means auto-calculate from data
+    "end_col": 0,      # NEW: 0 means auto-calculate from data
+    "style": "TableStyleMedium2"
+}]
 
+jet.write_sheet_arrow(df.to_arrow(), "table.xlsx", tables=tables)
+```
+
+### Auto-Sizing Tables
+
+Let Jetxl automatically calculate table dimensions based on your DataFrame:
 ```python
 import polars as pl
 import jetxl as jet
 
 df = pl.DataFrame({
-    "Product": ["Apple", "Banana", "Cherry", "Date"],
-    "Price": [1.50, 0.75, 2.25, 3.00],
-    "Quantity": [100, 150, 80, 60]
+    "Product": ["A", "B", "C", "D", "E"],  # 5 rows
+    "Price": [10, 20, 30, 40, 50],
+    "Qty": [100, 200, 150, 300, 250]       # 3 columns
 })
 
 tables = [{
-    "name": "ProductTable",           # Internal table name
-    "display_name": "Product Data",   # Display name (optional)
-    "start_row": 1,                   # Table starts at row 1 (header)
-    "start_col": 0,                   # First column
-    "end_row": 4,                     # Last row (including header)
-    "end_col": 2,                     # Last column
-    "style": "TableStyleMedium2",     # Excel table style
-    "show_first_column": False,       # Bold first column
-    "show_last_column": False,        # Bold last column
-    "show_row_stripes": True,         # Alternating row colors
-    "show_column_stripes": False      # Alternating column colors
+    "name": "AutoTable",
+    "start_row": 1,    # Table starts at row 1 (header)
+    "start_col": 0,    # Column A
+    "end_row": 0,      # Auto: becomes 6 (1 header + 5 data rows)
+    "end_col": 0,      # Auto: becomes 2 (columns A, B, C = indices 0, 1, 2)
+    "style": "TableStyleMedium2"
 }]
 
-jet.write_sheet_arrow(
-    df.to_arrow(),
-    "table.xlsx",
-    tables=tables
-)
+jet.write_sheet_arrow(df.to_arrow(), "auto_table.xlsx", tables=tables)
 ```
+
+**Manual vs Auto-Sizing:**
+```python
+# Manual (explicit range)
+table = {
+    "name": "ManualTable",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 100,    # Exactly 100 rows
+    "end_col": 5       # Columns A-F
+}
+
+# Auto (adapts to DataFrame)
+table = {
+    "name": "AutoTable", 
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 0,      # Uses all DataFrame rows
+    "end_col": 0       # Uses all DataFrame columns
+}
+
+# Mixed (partial auto)
+table = {
+    "name": "MixedTable",
+    "start_row": 1,
+    "start_col": 0,
+    "end_row": 50,     # Fixed 50 rows
+    "end_col": 0       # Auto-calculate columns
+}
+```
+
+**Auto-calculation rules:**
+- `end_row = 0` → calculated as `start_row + num_data_rows`
+- `end_col = 0` → calculated as `start_col + num_columns - 1`
+- If table starts after row 1, a header row is automatically inserted
+- Manual values (non-zero) are used as-is
 
 ### Available Table Styles
 
@@ -2292,6 +2335,54 @@ jet.write_sheet_arrow(
 - Multi-section reports where only one section should determine width
 - Files with merged header rows that contain long text
 
+### Header Content (Template Rows)
+
+Write arbitrary content above your DataFrame data - perfect for report titles, metadata, logos in merged cells, or template headers:
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Name": ["Alice", "Bob"],
+    "Sales": [1000, 1500]
+})
+
+# Add title rows, metadata, spacing before DataFrame
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "report.xlsx",
+    header_content=[
+        (1, 0, "ACME Corporation"),           # Row 1, Col A
+        (1, 2, "Confidential"),               # Row 1, Col C
+        (2, 0, "Q4 2024 Sales Report"),       # Row 2, Col A
+        (3, 0, "Generated: 2024-10-17"),      # Row 3, Col A
+        # Row 4 is empty (spacing)
+    ],
+    data_start_row=5,  # DataFrame starts at row 5
+    write_header_row=True,  # Row 5 will have column headers
+    # Actual data starts at row 6
+    merge_cells=[
+        (1, 0, 1, 1),  # Merge A1:B1 for company name
+    ]
+)
+```
+
+**Common use cases:**
+- Report headers with company name, logo placeholder, dates
+- Multi-line titles with merged cells
+- Metadata rows (author, generated date, version)
+- Template text that shouldn't come from DataFrame
+- Section dividers in complex reports
+
+**Coordinates:**
+- Row numbers are 1-based (row 1 is first row)
+- Column numbers are 0-based (0=A, 1=B, 2=C, etc.)
+- `header_content` rows are written BEFORE DataFrame data
+- Use `data_start_row` to position DataFrame below header content
+
+
+
+
 ### Professional Dashboard Example
 
 Combine appearance settings for a polished look:
@@ -2364,14 +2455,14 @@ df = pl.DataFrame({
     "Revenue": [1999.0, 4498.5, 2999.25]
 })
 
-# Configure Excel table
+# Tables auto-size to data
 tables = [{
     "name": "SalesData",
     "display_name": "Q1 Sales",
     "start_row": 1,
     "start_col": 0,
-    "end_row": 4,
-    "end_col": 4,
+    "end_row": 0,      # Auto-calculate from DataFrame rows
+    "end_col": 0,      # Auto-calculate from DataFrame columns
     "style": "TableStyleMedium9",
     "show_row_stripes": True
 }]

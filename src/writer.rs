@@ -266,18 +266,37 @@ pub fn write_single_sheet_arrow_with_config(
     }
     
     if !config.tables.is_empty() {
+        // Calculate total rows once for all tables
+        let total_data_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let num_cols = if !batches.is_empty() { batches[0].schema().fields().len() } else { 0 };
+        
         for (idx, table) in config.tables.iter().enumerate() {
             let table_id = (idx + 1) as u32;
             
-            // If table starts after row 1, we inserted a header row, so adjust end_row
             let mut adjusted_table = table.clone();
-            if adjusted_table.range.0 > 1 {
+            
+            // Auto-calculate end_row if not specified (0 means auto)
+            if adjusted_table.range.2 == 0 {
+                // end_row = start_row + num_data_rows - 1 (inclusive)
+                adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
+            }
+            
+            // Auto-calculate end_col if not specified (0 means auto)
+            if adjusted_table.range.3 == 0 {
+                if num_cols > 0 {
+                    adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
+                }
+            }
+            
+            // If table starts after row 1, we inserted a header row, so adjust end_row
+            // Only adjust if user manually specified end_row (not auto-calculated)
+            if adjusted_table.range.0 > 1 && table.range.2 != 0 {
                 adjusted_table.range.2 += 1; // end_row++
             }
             
             let col_names = if table.column_names.is_empty() && !batches.is_empty() {
                 let schema = batches[0].schema();
-                let (_, start_col, _, end_col) = table.range;
+                let (_, start_col, _, end_col) = adjusted_table.range;
                 schema.fields()[start_col..=end_col]
                     .iter()
                     .map(|f| f.name().clone())
@@ -522,10 +541,39 @@ pub fn write_multiple_sheets_arrow_with_configs(
         }
         
         if has_tables {
+            // Calculate total rows and cols for this sheet
+            let total_data_rows: usize = sheets[idx].0.iter().map(|b| b.num_rows()).sum();
+            let num_cols = if !sheets[idx].0.is_empty() { 
+                sheets[idx].0[0].schema().fields().len() 
+            } else { 
+                0 
+            };
+            
             for table in &sheet_config.tables {
+                let mut adjusted_table = table.clone();
+                
+                // Auto-calculate end_row if not specified (0 means auto)
+                if adjusted_table.range.2 == 0 {
+                    // end_row = start_row + num_data_rows - 1 (inclusive)
+                    adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
+                }
+                
+                // Auto-calculate end_col if not specified (0 means auto)
+                if adjusted_table.range.3 == 0 {
+                    if num_cols > 0 {
+                        adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
+                    }
+                }
+                
+                // If table starts after row 1, we inserted a header row, so adjust end_row
+                // Only adjust if user manually specified end_row (not auto-calculated)
+                if adjusted_table.range.0 > 1 && table.range.2 != 0 {
+                    adjusted_table.range.2 += 1; // end_row++
+                }
+                
                 let col_names = if table.column_names.is_empty() && !sheets[idx].0.is_empty() {
                     let schema = sheets[idx].0[0].schema();
-                    let (_, start_col, _, end_col) = table.range;
+                    let (_, start_col, _, end_col) = adjusted_table.range;
                     schema.fields()[start_col..=end_col]
                         .iter()
                         .map(|f| f.name().clone())
@@ -534,7 +582,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
                     table.column_names.clone()
                 };
                 
-                let table_xml = xml::generate_table_xml(table, global_table_id as u32, &col_names);
+                let table_xml = xml::generate_table_xml(&adjusted_table, global_table_id as u32, &col_names);
                 zipper
                     .add_file_from_memory(
                         table_xml.into_bytes(),
