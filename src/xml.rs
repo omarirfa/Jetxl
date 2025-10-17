@@ -1481,61 +1481,66 @@ pub fn generate_sheet_xml_from_arrow(
         }
     }
     
+    
+    // Cache feature flags to avoid repeated checks
+    let has_table_headers = !table_header_rows.is_empty();
+    let has_row_heights = config.row_heights.is_some();
+    let has_hidden_rows = !config.hidden_rows.is_empty();
+    
     // Write data rows (with optional table header insertion)
     for batch in batches {
         let batch_rows = batch.num_rows();
         
         for row_idx in 0..batch_rows {
             // Check if we need to insert table header row before this data row
-            if let Some(&(start_col, end_col)) = table_header_rows.get(&current_row) {
-                let row_str = int_buf.format(current_row);
-                let row_bytes = row_str.as_bytes();
-                
-                buf.extend_from_slice(b"<row r=\"");
-                buf.extend_from_slice(row_bytes);
-                buf.push(b'\"');
-                
-                if let Some(heights) = &config.row_heights {
-                    if let Some(height) = heights.get(&current_row) {
-                        buf.extend_from_slice(b" ht=\"");
-                        buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
-                        buf.extend_from_slice(b"\" customHeight=\"1\"");
+            if has_table_headers {
+                if let Some(&(start_col, end_col)) = table_header_rows.get(&current_row) {
+                    let row_str = int_buf.format(current_row);
+                    let row_bytes = row_str.as_bytes();
+                    
+                    buf.extend_from_slice(b"<row r=\"");
+                    buf.extend_from_slice(row_bytes);
+                    buf.push(b'\"');
+                    
+                    if has_row_heights {
+                        if let Some(height) = config.row_heights.as_ref().unwrap().get(&current_row) {
+                            buf.extend_from_slice(b" ht=\"");
+                            buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                            buf.extend_from_slice(b"\" customHeight=\"1\"");
+                        }
                     }
-                }
-                
-                // Hidden row check for table header
-                if config.hidden_rows.contains(&current_row) {
-                    buf.extend_from_slice(b" hidden=\"1\"");
-                }
-                
-                buf.push(b'>');
-                
-                // Write header cells for table columns
-                for col_idx in start_col..=end_col {
-                    let (col_letter, col_len) = &col_letters[col_idx];
-                    let field_name = schema.fields()[col_idx].name();
                     
-                    // Create fresh buffer for this cell
-                    let mut header_cell_ref = Vec::with_capacity(16);
-                    header_cell_ref.extend_from_slice(&col_letter[..*col_len]);
-                    header_cell_ref.extend_from_slice(row_bytes);
-                    
-                    // Check for custom style on header cell
-                    let custom_style_id = cell_style_map.get(&(current_row, col_idx)).copied();
-                    
-                    buf.extend_from_slice(b"<c r=\"");
-                    buf.extend_from_slice(&header_cell_ref);
-                    if let Some(sid) = custom_style_id {
-                        buf.extend_from_slice(b"\" s=\"");
-                        buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+                    if has_hidden_rows && config.hidden_rows.contains(&current_row) {
+                        buf.extend_from_slice(b" hidden=\"1\"");
                     }
-                    buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
-                    xml_escape_simd(field_name.as_bytes(), &mut buf);
-                    buf.extend_from_slice(b"</t></is></c>");
+                    
+                    buf.push(b'>');
+                    
+                    // Write header cells for table columns
+                    for col_idx in start_col..=end_col {
+                        let (col_letter, col_len) = &col_letters[col_idx];
+                        let field_name = schema.fields()[col_idx].name();
+                        
+                        let mut header_cell_ref = Vec::with_capacity(16);
+                        header_cell_ref.extend_from_slice(&col_letter[..*col_len]);
+                        header_cell_ref.extend_from_slice(row_bytes);
+                        
+                        let custom_style_id = cell_style_map.get(&(current_row, col_idx)).copied();
+                        
+                        buf.extend_from_slice(b"<c r=\"");
+                        buf.extend_from_slice(&header_cell_ref);
+                        if let Some(sid) = custom_style_id {
+                            buf.extend_from_slice(b"\" s=\"");
+                            buf.extend_from_slice(itoa::Buffer::new().format(sid).as_bytes());
+                        }
+                        buf.extend_from_slice(b"\" t=\"inlineStr\"><is><t>");
+                        xml_escape_simd(field_name.as_bytes(), &mut buf);
+                        buf.extend_from_slice(b"</t></is></c>");
+                    }
+                    
+                    buf.extend_from_slice(b"</row>");
+                    current_row += 1;
                 }
-                
-                buf.extend_from_slice(b"</row>");
-                current_row += 1;
             }
             
             // Write actual data row
@@ -1547,16 +1552,15 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(row_bytes);
             buf.push(b'\"');
             
-            if let Some(heights) = &config.row_heights {
-                if let Some(height) = heights.get(&row_num) {
+            if has_row_heights {
+                if let Some(height) = config.row_heights.as_ref().unwrap().get(&row_num) {
                     buf.extend_from_slice(b" ht=\"");
                     buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
                     buf.extend_from_slice(b"\" customHeight=\"1\"");
                 }
             }
             
-            // Hidden row check
-            if config.hidden_rows.contains(&row_num) {
+            if has_hidden_rows && config.hidden_rows.contains(&row_num) {
                 buf.extend_from_slice(b" hidden=\"1\"");
             }
             
