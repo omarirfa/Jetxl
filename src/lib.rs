@@ -134,7 +134,6 @@ fn write_sheets(
 ///         - float/int: Excel character units (e.g., 15.5)
 ///         - "150px": Pixel width (converted to characters)
 ///         - "auto": Auto-calculate from data
-///     column_widths (dict[str, float], optional): Manual column widths by name
 ///     column_formats (dict[str, str], optional): Number formats: "integer", "decimal2", "currency", "date", "percentage", etc.
 ///     merge_cells (list[tuple], optional): List of (start_row, start_col, end_row, end_col)
 ///     data_validations (list[dict], optional): Data validation rules
@@ -371,6 +370,7 @@ fn write_sheets_arrow(
         // Build config from optional parameters
         let mut config = StyleConfig::default();
         
+        // Basic options
         if let Some(auto_filter) = sheet_dict.get_item("auto_filter")?.and_then(|v| v.extract().ok()) {
             config.auto_filter = auto_filter;
         }
@@ -379,6 +379,43 @@ fn write_sheets_arrow(
         }
         if let Some(freeze_cols) = sheet_dict.get_item("freeze_cols")?.and_then(|v| v.extract().ok()) {
             config.freeze_cols = freeze_cols;
+        }
+        if let Some(auto_width) = sheet_dict.get_item("auto_width")?.and_then(|v| v.extract().ok()) {
+            config.auto_width = auto_width;
+        }
+        if let Some(styled_headers) = sheet_dict.get_item("styled_headers")?.and_then(|v| v.extract().ok()) {
+            config.styled_headers = styled_headers;
+        }
+        if let Some(write_header_row) = sheet_dict.get_item("write_header_row")?.and_then(|v| v.extract().ok()) {
+            config.write_header_row = write_header_row;
+        }
+
+        // Column widths - parse "auto", "150px", or float values
+        if let Some(widths) = sheet_dict.get_item("column_widths")? {
+            let widths_dict = widths.downcast::<PyDict>()?;
+            let parsed_widths: HashMap<String, ColumnWidth> = widths_dict.iter()
+                .filter_map(|(k, v)| {
+                    let col_name: String = k.extract().ok()?;
+                    let width = if let Ok(s) = v.extract::<String>() {
+                        if s.to_lowercase() == "auto" {
+                            ColumnWidth::Auto
+                        } else if s.ends_with("px") {
+                            let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                            ColumnWidth::Pixels(px)
+                        } else {
+                            ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                        }
+                    } else if let Ok(f) = v.extract::<f64>() {
+                        ColumnWidth::Characters(f)
+                    } else if let Ok(i) = v.extract::<i64>() {
+                        ColumnWidth::Characters(i as f64)
+                    } else {
+                        return None;
+                    };
+                    Some((col_name, width))
+                })
+                .collect();
+            config.column_widths = Some(parsed_widths);
         }
 
         // Extract column_formats
@@ -393,6 +430,101 @@ fn write_sheets_arrow(
                 }
             }
             config.column_formats = Some(col_fmts);
+        }
+
+        // Merge cells
+        if let Some(merge) = sheet_dict.get_item("merge_cells")? {
+            let merge_list = merge.downcast::<pyo3::types::PyList>()?;
+            for item in merge_list.iter() {
+                if let Ok(tuple) = item.extract::<(usize, usize, usize, usize)>() {
+                    config.merge_cells.push(MergeRange {
+                        start_row: tuple.0,
+                        start_col: tuple.1,
+                        end_row: tuple.2,
+                        end_col: tuple.3,
+                    });
+                }
+            }
+        }
+
+        // Data validations
+        if let Some(validations) = sheet_dict.get_item("data_validations")? {
+            let validations_list = validations.downcast::<pyo3::types::PyList>()?;
+            for val_dict in validations_list.iter() {
+                if let Ok(val_dict) = val_dict.downcast::<PyDict>() {
+                    if let Ok(validation) = extract_data_validation(&val_dict) {
+                        config.data_validations.push(validation);
+                    }
+                }
+            }
+        }
+
+        // Hyperlinks
+        if let Some(hyperlinks) = sheet_dict.get_item("hyperlinks")? {
+            let hyperlinks_list = hyperlinks.downcast::<pyo3::types::PyList>()?;
+            for item in hyperlinks_list.iter() {
+                if let Ok((row, col, url, display)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                    config.hyperlinks.push(Hyperlink { row, col, url, display });
+                }
+            }
+        }
+
+        // Row heights
+        if let Some(heights) = sheet_dict.get_item("row_heights")? {
+            let heights_dict = heights.downcast::<PyDict>()?;
+            let mut row_heights = HashMap::new();
+            for (key, value) in heights_dict.iter() {
+                let row: usize = key.extract()?;
+                let height: f64 = value.extract()?;
+                row_heights.insert(row, height);
+            }
+            config.row_heights = Some(row_heights);
+        }
+
+        // Cell styles
+        if let Some(styles) = sheet_dict.get_item("cell_styles")? {
+            let styles_list = styles.downcast::<pyo3::types::PyList>()?;
+            for style_dict in styles_list.iter() {
+                if let Ok(style_dict) = style_dict.downcast::<PyDict>() {
+                    if let Ok(cell_style) = extract_cell_style(&style_dict) {
+                        config.cell_styles.push(cell_style);
+                    }
+                }
+            }
+        }
+
+        // Formulas
+        if let Some(formulas) = sheet_dict.get_item("formulas")? {
+            let formulas_list = formulas.downcast::<pyo3::types::PyList>()?;
+            for item in formulas_list.iter() {
+                if let Ok((row, col, formula, cached_value)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                    config.formulas.push(Formula { row, col, formula, cached_value });
+                }
+            }
+        }
+
+        // Conditional formats
+        if let Some(cond_formats) = sheet_dict.get_item("conditional_formats")? {
+            let cond_list = cond_formats.downcast::<pyo3::types::PyList>()?;
+            for cond_dict in cond_list.iter() {
+                if let Ok(cond_dict) = cond_dict.downcast::<PyDict>() {
+                    if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                        config.conditional_formats.push(cond_format);
+                    }
+                }
+            }
+        }
+
+        // Tables
+        if let Some(tables_vec) = sheet_dict.get_item("tables")? {
+            let tables_list = tables_vec.downcast::<pyo3::types::PyList>()?;
+            for table_dict in tables_list.iter() {
+                if let Ok(table_dict) = table_dict.downcast::<PyDict>() {
+                    if let Ok(table) = extract_table(&table_dict) {
+                        config.tables.push(table);
+                    }
+                }
+            }
         }
 
         // Charts
@@ -419,7 +551,7 @@ fn write_sheets_arrow(
             }
         }
         
-        // additions
+        // Appearance options
         if let Some(val) = sheet_dict.get_item("gridlines_visible")?.and_then(|v| v.extract().ok()) {
             config.gridlines_visible = val;
         }
@@ -440,6 +572,9 @@ fn write_sheets_arrow(
         }
         if let Some(val) = sheet_dict.get_item("right_to_left")?.and_then(|v| v.extract().ok()) {
             config.right_to_left = val;
+        }
+        if let Some(val) = sheet_dict.get_item("data_start_row")?.and_then(|v| v.extract().ok()) {
+            config.data_start_row = val;
         }
         
         sheets_data.push((batches, name, config));

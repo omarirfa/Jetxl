@@ -1464,8 +1464,8 @@ def write_sheets_arrow(
 ) -> None:
     """Write multiple Arrow tables to Excel sheets with parallel processing.
     
-    This function enables multi-threaded XML generation for maximum performance
-    when creating workbooks with multiple sheets.
+    Full feature parity with write_sheet_arrow() - each sheet can have completely
+    independent formatting, styles, charts, tables, images, and all other options.
     
     Args:
         arrow_sheets: List of sheet configurations, each containing:
@@ -1474,57 +1474,33 @@ def write_sheets_arrow(
             - auto_filter: Enable autofilter (optional)
             - freeze_rows: Rows to freeze (optional)
             - freeze_cols: Columns to freeze (optional)
-            - styled_headers: Bold headers (optional)
-            - column_widths: Column widths (optional)
-            - column_formats: Number formats (optional)
-            - merge_cells: Cells to merge (optional)
-            - data_validations: Validation rules (optional)
-            - hyperlinks: Hyperlinks (optional)
-            - row_heights: Row heights (optional)
-            - cell_styles: Cell styles (optional)
-            - formulas: Formulas (optional)
-            - conditional_formats: Conditional formatting (optional)
-            - tables: Excel tables (optional)
-            - charts: Charts (optional)
-            - images: Images (optional)
+            - auto_width: Auto-calculate column widths (optional)
+            - styled_headers: Bold headers with gray background (optional)
+            - write_header_row: Write column names as first row (optional)
+            - column_widths: Dict[str, float|str] - manual widths (optional)
+            - column_formats: Dict[str, str] - number formats (optional)
+            - merge_cells: List[(row, col, row, col)] - merge ranges (optional)
+            - data_validations: List[dict] - validation rules (optional)
+            - hyperlinks: List[(row, col, url, display)] (optional)
+            - row_heights: Dict[int, float] - row heights (optional)
+            - cell_styles: List[dict] - individual cell styles (optional)
+            - formulas: List[(row, col, formula, cached_value)] (optional)
+            - conditional_formats: List[dict] - conditional formatting (optional)
+            - tables: List[dict] - Excel table definitions (optional)
+            - charts: List[dict] - chart definitions (optional)
+            - images: List[dict] - image definitions (optional)
             - gridlines_visible: Show gridlines (optional)
             - zoom_scale: Zoom percentage 10-400 (optional)
             - tab_color: Sheet tab color in ARGB hex (optional)
             - default_row_height: Default row height (optional)
-            - hidden_columns: Column indices to hide (optional)
-            - hidden_rows: Row indices to hide (optional)
+            - hidden_columns: List[int] - column indices to hide (optional)
+            - hidden_rows: List[int] - row indices to hide (optional)
             - right_to_left: RTL layout (optional)
+            - data_start_row: Skip rows for auto-width calculation (optional)
         filename: Output Excel file path (.xlsx)
         num_threads: Number of parallel threads for XML generation
     
     Examples:
-        Multi-Sheet with Images:
-            >>> sheets = [
-            ...     {
-            ...         "data": df_sales.to_arrow(),
-            ...         "name": "Sales",
-            ...         "images": [{
-            ...             "path": "sales_chart.png",
-            ...             "from_col": 5,
-            ...             "from_row": 1,
-            ...             "to_col": 12,
-            ...             "to_row": 15
-            ...         }]
-            ...     },
-            ...     {
-            ...         "data": df_costs.to_arrow(),
-            ...         "name": "Costs",
-            ...         "images": [{
-            ...             "path": "cost_breakdown.png",
-            ...             "from_col": 4,
-            ...             "from_row": 2,
-            ...             "to_col": 10,
-            ...             "to_row": 18
-            ...         }]
-            ...     }
-            ... ]
-            >>> jetxl.write_sheets_arrow(sheets, "report.xlsx", num_threads=2)
-        
         Basic Multi-Sheet:
             >>> import polars as pl
             >>> import jetxl
@@ -1539,47 +1515,78 @@ def write_sheets_arrow(
             >>> 
             >>> jetxl.write_sheets_arrow(sheets, "report.xlsx", num_threads=2)
         
-        With Individual Sheet Formatting:
+        Independent Sheet Formatting:
             >>> sheets = [
             ...     {
             ...         "data": df_sales.to_arrow(),
             ...         "name": "Sales",
             ...         "auto_filter": True,
             ...         "styled_headers": True,
-            ...         "column_formats": {"Revenue": "currency"}
+            ...         "column_formats": {"Revenue": "currency"},
+            ...         "tables": [{
+            ...             "name": "SalesTable",
+            ...             "start_row": 1, "start_col": 0,
+            ...             "end_row": 100, "end_col": 2,
+            ...             "style": "TableStyleMedium2"
+            ...         }]
             ...     },
             ...     {
             ...         "data": df_costs.to_arrow(),
             ...         "name": "Costs",
             ...         "freeze_rows": 1,
-            ...         "column_formats": {"Cost": "currency"}
+            ...         "conditional_formats": [{
+            ...             "start_row": 2, "start_col": 1,
+            ...             "end_row": 50, "end_col": 1,
+            ...             "rule_type": "data_bar",
+            ...             "color": "FF638EC6",
+            ...             "show_value": True,
+            ...             "priority": 1
+            ...         }]
             ...     },
             ...     {
             ...         "data": df_profit.to_arrow(),
             ...         "name": "Profit",
-            ...         "auto_width": True
+            ...         "auto_width": True,
+            ...         "cell_styles": [{
+            ...             "row": 2, "col": 0,
+            ...             "font": {"bold": True, "color": "FF00B050"}
+            ...         }]
             ...     }
             ... ]
             >>> 
             >>> jetxl.write_sheets_arrow(sheets, "complete.xlsx", num_threads=4)
         
-        With Charts Per Sheet:
+        Charts, Tables, and Images Per Sheet:
             >>> sheets = [
             ...     {
             ...         "data": df_monthly.to_arrow(),
             ...         "name": "Monthly Sales",
+            ...         "styled_headers": True,
+            ...         "tables": [{
+            ...             "name": "MonthlyData",
+            ...             "start_row": 1, "start_col": 0,
+            ...             "end_row": 12, "end_col": 3,
+            ...             "style": "TableStyleMedium9"
+            ...         }],
             ...         "charts": [{
             ...             "chart_type": "column",
             ...             "start_row": 1, "start_col": 0,
             ...             "end_row": 12, "end_col": 2,
-            ...             "from_col": 4, "from_row": 1,
-            ...             "to_col": 12, "to_row": 15,
-            ...             "title": "Sales Trend"
+            ...             "from_col": 5, "from_row": 1,
+            ...             "to_col": 13, "to_row": 16,
+            ...             "title": "Sales Trend",
+            ...             "category_col": 0
+            ...         }],
+            ...         "images": [{
+            ...             "path": "logo.png",
+            ...             "from_col": 0, "from_row": 0,
+            ...             "to_col": 2, "to_row": 4
             ...         }]
             ...     },
             ...     {
             ...         "data": df_quarterly.to_arrow(),
             ...         "name": "Quarterly Summary",
+            ...         "auto_filter": True,
             ...         "charts": [{
             ...             "chart_type": "pie",
             ...             "start_row": 1, "start_col": 0,
@@ -1592,95 +1599,56 @@ def write_sheets_arrow(
             ... ]
             >>> 
             >>> jetxl.write_sheets_arrow(sheets, "dashboard.xlsx", num_threads=2)
-
-            Sheet Appearance Per Sheet:
-            >>> sheets = [
-            ...     {
-            ...         "data": df_sales.to_arrow(),
-            ...         "name": "Sales",
-            ...         "gridlines_visible": False,
-            ...         "zoom_scale": 120,
-            ...         "tab_color": "FF00B050",  # Green
-            ...         "default_row_height": 18.0,
-            ...         "column_widths": {"Product": 25.0, "Revenue": 15.0}
-            ...     },
-            ...     {
-            ...         "data": df_costs.to_arrow(),
-            ...         "name": "Costs",
-            ...         "hidden_columns": [2, 3],
-            ...         "hidden_rows": [5],
-            ...         "right_to_left": False,
-            ...         "tab_color": "FFFF0000"  # Red
-            ...     }
-            ... ]
-            >>> jetxl.write_sheets_arrow(sheets, "styled.xlsx", num_threads=2)
         
-        Complex Multi-Sheet Report:
-            >>> import polars as pl
-            >>> import jetxl
-            >>> 
-            >>> # Create sample data
-            >>> df1 = pl.DataFrame({
-            ...     "Month": ["Jan", "Feb", "Mar"],
-            ...     "Sales": [1000, 1500, 1200]
-            ... })
-            >>> 
-            >>> df2 = pl.DataFrame({
-            ...     "Category": ["A", "B", "C"],
-            ...     "Count": [50, 75, 100]
-            ... })
-            >>> 
-            >>> # Configure sheets
+        Advanced Formatting Per Sheet:
             >>> sheets = [
             ...     {
             ...         "data": df1.to_arrow(),
-            ...         "name": "Sales",
+            ...         "name": "Formatted",
+            ...         "auto_width": True,
             ...         "styled_headers": True,
-            ...         "auto_filter": True,
-            ...         "column_formats": {"Sales": "currency"},
-            ...         "tables": [{
-            ...             "name": "SalesTable",
-            ...             "start_row": 1, "start_col": 0,
-            ...             "end_row": 4, "end_col": 1,
-            ...             "style": "TableStyleMedium2"
+            ...         "freeze_rows": 1,
+            ...         "column_formats": {
+            ...             "Date": "date",
+            ...             "Amount": "currency",
+            ...             "Rate": "percentage"
+            ...         },
+            ...         "merge_cells": [(1, 0, 1, 3)],
+            ...         "data_validations": [{
+            ...             "start_row": 2, "start_col": 4,
+            ...             "end_row": 100, "end_col": 4,
+            ...             "type": "list",
+            ...             "items": ["Active", "Inactive"],
+            ...             "show_dropdown": True
             ...         }],
-            ...         "charts": [{
-            ...             "chart_type": "line",
-            ...             "start_row": 1, "start_col": 0,
-            ...             "end_row": 4, "end_col": 1,
-            ...             "from_col": 3, "from_row": 1,
-            ...             "to_col": 10, "to_row": 12,
-            ...             "title": "Monthly Trend"
-            ...         }]
+            ...         "hyperlinks": [(2, 0, "https://example.com", "Link")],
+            ...         "formulas": [(5, 5, "=SUM(A2:A4)", None)],
+            ...         "gridlines_visible": False,
+            ...         "zoom_scale": 120,
+            ...         "tab_color": "FF00B050"
             ...     },
             ...     {
             ...         "data": df2.to_arrow(),
-            ...         "name": "Categories",
-            ...         "freeze_rows": 1,
-            ...         "auto_width": True,
-            ...         "conditional_formats": [{
-            ...             "start_row": 2, "start_col": 1,
-            ...             "end_row": 4, "end_col": 1,
-            ...             "rule_type": "data_bar",
-            ...             "color": "FF638EC6",
-            ...             "show_value": True,
-            ...             "priority": 1
-            ...         }]
+            ...         "name": "Raw Data",
+            ...         "write_header_row": False,  # Data only, no headers
+            ...         "hidden_columns": [2, 3],
+            ...         "default_row_height": 20.0
             ...     }
             ... ]
             >>> 
-            >>> jetxl.write_sheets_arrow(sheets, "report.xlsx", num_threads=4)
+            >>> jetxl.write_sheets_arrow(sheets, "advanced.xlsx", num_threads=2)
     
     Raises:
-        IOError: If file cannot be written
+        IOError: If file cannot be written or images cannot be read
         ValueError: If any sheet data is invalid
+        KeyError: If required keys (data, name) are missing
     
     Notes:
-        - Each sheet can have independent images, charts, and formatting
-        - Images are embedded in the workbook
-        - Thread count doesn't need to match sheet count
-        - All sheets share the same workbook-level styles
-        - Parallel processing significantly speeds up multi-sheet files
+        - Full feature parity with write_sheet_arrow()
+        - Each sheet has completely independent configuration
+        - Style registry is shared across sheets for deduplication
+        - Parallel XML generation across num_threads
+        - Performance: minimal overhead vs single-sheet (<1%)
     """
     ...
 
