@@ -593,6 +593,305 @@ fn write_sheets_arrow(
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
     })
 }
+
+#[pyfunction]
+#[pyo3(signature = (
+    arrow_data,
+    sheet_name = None,
+    auto_filter = false,
+    freeze_rows = 0,
+    freeze_cols = 0,
+    auto_width = false,
+    styled_headers = false,
+    write_header_row = true,
+    column_widths = None,
+    column_formats = None,
+    merge_cells = None,
+    data_validations = None,
+    hyperlinks = None,
+    row_heights = None,
+    cell_styles = None,
+    formulas = None,
+    conditional_formats = None,
+    tables = None,
+    charts = None,
+    images = None,
+    gridlines_visible = true,
+    zoom_scale = None,
+    tab_color = None,
+    default_row_height = None,
+    hidden_columns = None,
+    hidden_rows = None,
+    right_to_left = false,
+    data_start_row = 0,
+    header_content = None,
+))]
+/// Write Arrow data to Excel bytes (in-memory, no file I/O).
+/// Returns bytes that can be directly base64 encoded or sent over HTTP.
+#[allow(clippy::too_many_arguments)]
+fn write_sheet_arrow_to_bytes(
+    py: Python,
+    arrow_data: &Bound<PyAny>,
+    sheet_name: Option<String>,
+    auto_filter: bool,
+    freeze_rows: usize,
+    freeze_cols: usize,
+    auto_width: bool,
+    styled_headers: bool,
+    write_header_row: bool,
+    column_widths: Option<HashMap<String, Bound<PyAny>>>,
+    column_formats: Option<HashMap<String, String>>,
+    merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
+    data_validations: Option<Vec<Bound<PyDict>>>,
+    hyperlinks: Option<Vec<(usize, usize, String, Option<String>)>>,
+    row_heights: Option<HashMap<usize, f64>>,
+    cell_styles: Option<Vec<Bound<PyDict>>>,
+    formulas: Option<Vec<(usize, usize, String, Option<String>)>>,
+    conditional_formats: Option<Vec<Bound<PyDict>>>,
+    tables: Option<Vec<Bound<PyDict>>>,
+    charts: Option<Vec<Bound<PyDict>>>,
+    images: Option<Vec<Bound<PyDict>>>,
+    gridlines_visible: bool,
+    zoom_scale: Option<u16>,
+    tab_color: Option<String>,
+    default_row_height: Option<f64>,
+    hidden_columns: Option<Vec<usize>>,
+    hidden_rows: Option<Vec<usize>>,
+    right_to_left: bool,
+    data_start_row: usize,
+    header_content: Option<Vec<(usize, usize, String)>>
+) -> PyResult<Py<pyo3::types::PyBytes>> {
+    // Convert PyArrow data to RecordBatch
+    let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
+    let reader = any_batch.into_reader()?;
+    
+    let batches: Vec<RecordBatch> = reader
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Failed to read Arrow data: {}", e)
+        ))?;
+    
+    if batches.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Empty data"));
+    }
+
+    let sheet = sheet_name.as_deref().unwrap_or("Sheet1");
+
+    // Parse column_widths - supports float, "auto", or "150px"
+    let parsed_column_widths = column_widths.map(|cw| {
+        cw.into_iter()
+            .filter_map(|(k, v)| {
+                let width = if let Ok(s) = v.extract::<String>() {
+                    if s.to_lowercase() == "auto" {
+                        ColumnWidth::Auto
+                    } else if s.ends_with("px") {
+                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                        ColumnWidth::Pixels(px)
+                    } else {
+                        // Try parsing as number string
+                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                    }
+                } else if let Ok(f) = v.extract::<f64>() {
+                    ColumnWidth::Characters(f)
+                } else if let Ok(i) = v.extract::<i64>() {
+                    ColumnWidth::Characters(i as f64)
+                } else {
+                    return None;
+                };
+                Some((k, width))
+            })
+            .collect()
+    });
+
+    // Parse column_formats
+    let parsed_column_formats = column_formats.map(|cf| {
+        cf.into_iter()
+            .filter_map(|(k, v)| parse_number_format(&v).map(|fmt| (k, fmt)))
+            .collect()
+    });
+
+    // Parse merge_cells
+    let parsed_merge_cells = merge_cells.unwrap_or_default().into_iter().map(|(sr, sc, er, ec)| {
+        MergeRange { start_row: sr, start_col: sc, end_row: er, end_col: ec }
+    }).collect();
+
+    // Parse hyperlinks
+    let parsed_hyperlinks = hyperlinks.unwrap_or_default().into_iter().map(|(row, col, url, display)| {
+        Hyperlink { row, col, url, display }
+    }).collect();
+
+    // Build config
+    let mut config = StyleConfig {
+        auto_filter,
+        freeze_rows,
+        freeze_cols,
+        auto_width,
+        styled_headers,
+        write_header_row,
+        column_widths: parsed_column_widths,
+        column_formats: parsed_column_formats,
+        merge_cells: parsed_merge_cells,
+        data_validations: data_validations.map(|v| v.iter().filter_map(|d| extract_data_validation(d).ok()).collect()).unwrap_or_default(),
+        hyperlinks: parsed_hyperlinks,
+        row_heights,
+        cell_styles: cell_styles.map(|v| v.iter().filter_map(|d| extract_cell_style(d).ok()).collect()).unwrap_or_default(),
+        formulas: Vec::new(),
+        conditional_formats: conditional_formats.map(|v| v.iter().filter_map(|d| extract_conditional_format(d).ok()).collect()).unwrap_or_default(),
+        tables: tables.map(|v| v.iter().filter_map(|d| extract_table(d).ok()).collect()).unwrap_or_default(),
+        charts: charts.map(|v| v.iter().filter_map(|d| extract_chart(d).ok()).collect()).unwrap_or_default(),
+        images: images.map(|v| v.iter().filter_map(|d| extract_image(d).ok()).collect()).unwrap_or_default(),
+        gridlines_visible,
+        zoom_scale,
+        tab_color,
+        default_row_height,
+        hidden_columns: hidden_columns.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        hidden_rows: hidden_rows.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        right_to_left,
+        data_start_row,
+        header_content: header_content.unwrap_or_default(),
+        cond_format_dxf_ids: HashMap::new(),
+    };
+
+    // Parse formulas
+    if let Some(formulas_vec) = formulas {
+        for (row, col, formula, cached_value) in formulas_vec {
+            config.formulas.push(Formula { row, col, formula, cached_value });
+        }
+    }
+
+    let bytes = py.detach(|| {
+        writer::write_single_sheet_arrow_to_bytes(&batches, sheet, &config)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+    })?;
+
+    Ok(pyo3::types::PyBytes::new(py, &bytes).into())
+}
+
+#[pyfunction]
+#[pyo3(signature = (sheets_data, num_threads = 1))]
+/// Write multiple sheets to Excel bytes (in-memory, no file I/O).
+fn write_sheets_arrow_to_bytes(
+    py: Python,
+    sheets_data: Vec<Bound<PyDict>>,
+    num_threads: usize,
+) -> PyResult<Py<pyo3::types::PyBytes>> {
+    let sheets: Result<Vec<_>, PyErr> = sheets_data
+        .into_iter()
+        .enumerate()
+        .map(|(i, sheet_dict)| -> PyResult<(Vec<RecordBatch>, String, StyleConfig)> {
+            let name = sheet_dict
+                .get_item("name")?
+                .and_then(|n| n.extract::<String>().ok())
+                .unwrap_or_else(|| format!("Sheet{}", i + 1));
+
+            let arrow_item = sheet_dict
+                .get_item("data")?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'data' key"))?;
+
+            // Convert PyArrow data to RecordBatch
+            let any_batch = AnyRecordBatch::extract_bound(&arrow_item)?;
+            let reader = any_batch.into_reader()?;
+            
+            let batches: Vec<RecordBatch> = reader
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Failed to read Arrow data: {}", e)
+                ))?;
+
+            let auto_filter = sheet_dict.get_item("auto_filter")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+            let freeze_rows = sheet_dict.get_item("freeze_rows")?.map(|v| v.extract()).unwrap_or(Ok(0))?;
+            let freeze_cols = sheet_dict.get_item("freeze_cols")?.map(|v| v.extract()).unwrap_or(Ok(0))?;
+            let auto_width = sheet_dict.get_item("auto_width")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+            let styled_headers = sheet_dict.get_item("styled_headers")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+            let write_header_row = sheet_dict.get_item("write_header_row")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+            let data_start_row = sheet_dict.get_item("data_start_row")?.map(|v| v.extract()).unwrap_or(Ok(0))?;
+
+            let column_widths: Option<HashMap<String, Bound<PyAny>>> = sheet_dict.get_item("column_widths")?.and_then(|v| v.extract().ok());
+            let column_formats: Option<HashMap<String, String>> = sheet_dict.get_item("column_formats")?.and_then(|v| v.extract().ok());
+
+            // Parse column_widths - supports float, "auto", or "150px"
+            let parsed_column_widths = column_widths.map(|cw| {
+                cw.into_iter()
+                    .filter_map(|(k, v)| {
+                        let width = if let Ok(s) = v.extract::<String>() {
+                            if s.to_lowercase() == "auto" {
+                                ColumnWidth::Auto
+                            } else if s.ends_with("px") {
+                                let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                                ColumnWidth::Pixels(px)
+                            } else {
+                                // Try parsing as number string
+                                ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                            }
+                        } else if let Ok(f) = v.extract::<f64>() {
+                            ColumnWidth::Characters(f)
+                        } else if let Ok(i) = v.extract::<i64>() {
+                            ColumnWidth::Characters(i as f64)
+                        } else {
+                            return None;
+                        };
+                        Some((k, width))
+                    })
+                    .collect()
+            });
+
+            // Parse column_formats
+            let parsed_column_formats = column_formats.map(|cf| {
+                cf.into_iter()
+                    .filter_map(|(k, v)| parse_number_format(&v).map(|fmt| (k, fmt)))
+                    .collect()
+            });
+
+            let config = StyleConfig {
+                auto_filter,
+                freeze_rows,
+                freeze_cols,
+                auto_width,
+                styled_headers,
+                write_header_row,
+                column_widths: parsed_column_widths,
+                column_formats: parsed_column_formats,
+                merge_cells: vec![],
+                data_validations: vec![],
+                hyperlinks: vec![],
+                row_heights: None,
+                cell_styles: vec![],
+                formulas: vec![],
+                conditional_formats: vec![],
+                tables: vec![],
+                charts: vec![],
+                images: vec![],
+                gridlines_visible: true,
+                zoom_scale: None,
+                tab_color: None,
+                default_row_height: None,
+                hidden_columns: std::collections::HashSet::new(),
+                hidden_rows: std::collections::HashSet::new(),
+                right_to_left: false,
+                data_start_row,
+                header_content: vec![],
+                cond_format_dxf_ids: HashMap::new(),
+            };
+
+            Ok((batches, name, config))
+        })
+        .collect();
+
+    let sheets = sheets?;
+    let sheets_ref: Vec<_> = sheets.iter()
+        .map(|(batches, name, config)| (batches.clone(), name.as_str(), config.clone()))
+        .collect();
+
+    let bytes = py.detach(|| {
+        writer::write_multiple_sheets_arrow_to_bytes(&sheets_ref, num_threads)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+    })?;
+
+    Ok(pyo3::types::PyBytes::new(py, &bytes).into())
+}
+
+
+
 // ============================================================================
 // Helper functions - Extraction from Python
 // ============================================================================
@@ -947,9 +1246,13 @@ fn jetxl(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_sheet, m)?)?;
     m.add_function(wrap_pyfunction!(write_sheets, m)?)?;
     
-    // Arrow fast path API
+    // Arrow fast path API (file-based)
     m.add_function(wrap_pyfunction!(write_sheet_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(write_sheets_arrow, m)?)?;
+    
+    // Arrow fast path API (in-memory bytes)
+    m.add_function(wrap_pyfunction!(write_sheet_arrow_to_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(write_sheets_arrow_to_bytes, m)?)?;
     
     Ok(())
 }

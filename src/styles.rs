@@ -425,6 +425,14 @@ impl StyleRegistry {
         match code_opt {
             None => Ok(base_id),
             Some(code) => {
+                // Check for duplicates FIRST - O(n) but n is small and avoids validation
+                for (id, existing_code) in &self.custom_num_fmts {
+                    if existing_code == code {
+                        return Ok(*id);
+                    }
+                }
+                
+                // Validate only NEW formats
                 if is_likely_invalid_format(code) {
                     return Err(format!(
                         "Invalid format code: '{}'. Use valid Excel format codes like '0.00', '#,##0', or named formats like 'currency', 'decimal2'", 
@@ -432,17 +440,9 @@ impl StyleRegistry {
                     ));
                 }
                 
-                // Check if custom format matches a built-in
                 if let Some(builtin_name) = get_builtin_format_name(code) {
                     eprintln!("Warning: Format code '{}' matches built-in format '{}'. Recommend using column_formats={{'column': '{}'}}", 
                         code, builtin_name, builtin_name);
-                }
-                
-                // Check for duplicates and reuse
-                for (id, existing_code) in &self.custom_num_fmts {
-                    if existing_code == code {
-                        return Ok(*id);
-                    }
                 }
                 
                 // Add new custom format

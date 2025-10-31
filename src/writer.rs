@@ -357,6 +357,393 @@ pub fn write_single_sheet_arrow_with_config(
     write_zip_to_file(zipper, filename)
 }
 
+pub fn write_single_sheet_arrow_to_bytes(
+    batches: &[RecordBatch],
+    sheet_name: &str,
+    config: &StyleConfig,
+) -> Result<Vec<u8>, WriteError> {
+    validate_sheet_name(sheet_name)?;
+
+    let mut registry = StyleRegistry::new();
+    let mut updated_config = config.clone();
+
+    let schema = batches[0].schema();
+    let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
+        let mut map = HashMap::new();
+        for (idx, field) in schema.fields().iter().enumerate() {
+            if let Some(fmt) = formats.get(field.name()) {
+                let cell_style = CellStyle {
+                    font: None,
+                    fill: None,
+                    border: None,
+                    alignment: None,
+                    number_format: Some(fmt.clone()),
+                };
+                let style_id = registry.register_cell_style(&cell_style)
+                    .map_err(|e| WriteError::Validation(e))?;
+                map.insert(idx, style_id);
+            }
+        }
+        map
+    } else {
+        HashMap::new()
+    };
+
+    let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
+    for cell_style in &config.cell_styles {
+        let style_id = registry.register_cell_style(&cell_style.style)
+            .map_err(|e| WriteError::Validation(e))?;
+        cell_style_map.insert((cell_style.row, cell_style.col), style_id);
+    }
+
+    if !config.conditional_formats.is_empty() {
+        let mut dxf_ids = HashMap::new();
+        for (idx, cond_format) in config.conditional_formats.iter().enumerate() {
+            match &cond_format.rule {
+                ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
+                    registry.register_cell_style(&cond_format.style)
+                        .map_err(|e| WriteError::Validation(e))?;
+                    dxf_ids.insert(idx, idx);
+                }
+                _ => {}
+            }
+        }
+        updated_config.conditional_formats = config.conditional_formats.clone();
+    }
+
+    let xml_data = xml::generate_sheet_xml_from_arrow(
+        batches,
+        &updated_config,
+        &col_format_map,
+        &cell_style_map,
+    )?;
+
+    let mut zipper = ZipArchive::new();
+    let sheet_names = vec![sheet_name];
+    let charts_count = vec![config.charts.len()];
+    let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
+    
+    add_static_files(
+        &mut zipper, 
+        &sheet_names, 
+        Some(&registry), 
+        &[config.tables.len()], 
+        &charts_count, 
+        &[(config.images.clone(), drawing_count)]
+    );
+
+    zipper
+        .add_file_from_memory(xml_data, "xl/worksheets/sheet1.xml".to_string())
+        .compression_level(CompressionLevel::fast())
+        .done();
+
+    if !config.charts.is_empty() {
+        let drawing_xml = xml::generate_drawing_xml(&config.charts);
+        zipper
+            .add_file_from_memory(drawing_xml.into_bytes(), "xl/drawings/drawing1.xml".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
+        zipper
+            .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+        
+        for (idx, chart) in config.charts.iter().enumerate() {
+            let chart_xml = xml::generate_chart_xml(chart, sheet_name);
+            zipper
+                .add_file_from_memory(
+                    chart_xml.into_bytes(),
+                    format!("xl/charts/chart{}.xml", idx + 1)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        rels_xml.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
+        rels_xml.push_str("</Relationships>");
+        
+        zipper
+            .add_file_from_memory(rels_xml.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+    }
+
+    if !config.tables.is_empty() {
+        for (idx, table) in config.tables.iter().enumerate() {
+            let col_names = if table.column_names.is_empty() {
+                let (_, start_col, _, end_col) = table.range;
+                schema.fields()[start_col..=end_col]
+                    .iter()
+                    .map(|f| f.name().clone())
+                    .collect()
+            } else {
+                table.column_names.clone()
+            };
+            
+            let table_xml = xml::generate_table_xml(table, (idx + 1) as u32, &col_names);
+            zipper
+                .add_file_from_memory(
+                    table_xml.into_bytes(),
+                    format!("xl/tables/table{}.xml", idx + 1)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        let mut table_rels = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+        for idx in 0..config.tables.len() {
+            table_rels.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", idx + 1, idx + 1));
+        }
+        if !config.charts.is_empty() || !config.images.is_empty() {
+            table_rels.push_str("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\n");
+        }
+        table_rels.push_str("</Relationships>");
+        
+        zipper
+            .add_file_from_memory(table_rels.into_bytes(), "xl/worksheets/_rels/sheet1.xml.rels".to_string())
+            .compression_level(CompressionLevel::fast())
+            .done();
+    }
+
+    if !config.images.is_empty() {
+        for (idx, image) in config.images.iter().enumerate() {
+            zipper
+                .add_file_from_memory(
+                    image.image_data.clone(),
+                    format!("xl/media/image{}.{}", idx + 1, image.extension)
+                )
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+    }
+
+    write_zip_to_buffer(zipper)
+}
+
+pub fn write_multiple_sheets_arrow_to_bytes(
+    sheets: &[(Vec<RecordBatch>, &str, StyleConfig)],
+    num_threads: usize,
+) -> Result<Vec<u8>, WriteError> {
+    for (batches, sheet_name, _) in sheets {
+        validate_sheet_name(sheet_name)?;
+        if batches.is_empty() {
+            return Err(WriteError::Validation("Empty batches".to_string()));
+        }
+    }
+
+    let xml_results: Vec<_> = if num_threads > 1 && sheets.len() > 1 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .map_err(|e| WriteError::Validation(format!("Thread pool error: {}", e)))?;
+        
+        pool.install(|| {
+            sheets
+                .par_iter()
+                .map(|(batches, _, config)| {
+                    let mut registry = StyleRegistry::new();
+                    let schema = batches[0].schema();
+                    let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
+                        let mut map = HashMap::new();
+                        for (idx, field) in schema.fields().iter().enumerate() {
+                            if let Some(fmt) = formats.get(field.name()) {
+                                let cell_style = CellStyle {
+                                    font: None,
+                                    fill: None,
+                                    border: None,
+                                    alignment: None,
+                                    number_format: Some(fmt.clone()),
+                                };
+                                if let Ok(style_id) = registry.register_cell_style(&cell_style) {
+                                    map.insert(idx, style_id);
+                                }
+                            }
+                        }
+                        map
+                    } else {
+                        HashMap::new()
+                    };
+
+                   let cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
+                   xml::generate_sheet_xml_from_arrow(batches, config, &col_format_map, &cell_style_map)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?
+    } else {
+        sheets
+            .iter()
+            .map(|(batches, _, config)| {
+                let mut registry = StyleRegistry::new();
+                let schema = batches[0].schema();
+                let col_format_map: HashMap<usize, u32> = if let Some(formats) = &config.column_formats {
+                    let mut map = HashMap::new();
+                    for (idx, field) in schema.fields().iter().enumerate() {
+                        if let Some(fmt) = formats.get(field.name()) {
+                            let cell_style = CellStyle {
+                                font: None,
+                                fill: None,
+                                border: None,
+                                alignment: None,
+                                number_format: Some(fmt.clone()),
+                            };
+                            if let Ok(style_id) = registry.register_cell_style(&cell_style) {
+                                map.insert(idx, style_id);
+                            }
+                        }
+                    }
+                    map
+                } else {
+                    HashMap::new()
+                };
+
+                let cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
+                xml::generate_sheet_xml_from_arrow(batches, config, &col_format_map, &cell_style_map)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut zipper = ZipArchive::new();
+    let sheet_names: Vec<&str> = sheets.iter().map(|(_, name, _)| *name).collect();
+    let tables_count: Vec<usize> = sheets.iter().map(|(_, _, config)| config.tables.len()).collect();
+    let charts_count: Vec<usize> = sheets.iter().map(|(_, _, config)| config.charts.len()).collect();
+    let images_data: Vec<(Vec<ExcelImage>, usize)> = sheets.iter().map(|(_, _, config)| {
+        let drawing_count = if config.charts.is_empty() && config.images.is_empty() { 0 } else { 1 };
+        (config.images.clone(), drawing_count)
+    }).collect();
+
+    add_static_files(&mut zipper, &sheet_names, None, &tables_count, &charts_count, &images_data);
+
+    for (idx, xml_data) in xml_results.into_iter().enumerate() {
+        zipper
+            .add_file_from_memory(xml_data, format!("xl/worksheets/sheet{}.xml", idx + 1))
+            .compression_level(CompressionLevel::fast())
+            .done();
+    }
+
+    let mut global_chart_id = 1;
+    let mut global_table_id = 1;
+    let mut drawing_id = 1;
+
+    for (idx, (_, _, sheet_config)) in sheets.iter().enumerate() {
+        let has_charts = !sheet_config.charts.is_empty();
+        let has_tables = !sheet_config.tables.is_empty();
+        
+        if has_tables || has_charts || !sheet_config.images.is_empty() {
+            let mut rels_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
+            
+            if has_tables {
+                for table_idx in 0..sheet_config.tables.len() {
+                    rels_xml.push_str(&format!("<Relationship Id=\"rIdTable{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{}.xml\"/>\n", table_idx + 1, global_table_id + table_idx));
+                }
+            }
+            
+            if has_charts || !sheet_config.images.is_empty() {
+                rels_xml.push_str(&format!("<Relationship Id=\"rIdDraw1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{}.xml\"/>\n", drawing_id));
+            }
+            
+            rels_xml.push_str("</Relationships>");
+            zipper
+                .add_file_from_memory(rels_xml.into_bytes(), format!("xl/worksheets/_rels/sheet{}.xml.rels", idx + 1))
+                .compression_level(CompressionLevel::fast())
+                .done();
+        }
+        
+        if has_tables {
+            let total_data_rows: usize = sheets[idx].0.iter().map(|b| b.num_rows()).sum();
+            let num_cols = if !sheets[idx].0.is_empty() { 
+                sheets[idx].0[0].schema().fields().len() 
+            } else { 
+                0 
+            };
+            
+            for table in &sheet_config.tables {
+                let mut adjusted_table = table.clone();
+                
+                if adjusted_table.range.2 == 0 {
+                    adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
+                }
+                
+                if adjusted_table.range.3 == 0 {
+                    if num_cols > 0 {
+                        adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
+                    }
+                }
+                
+                if adjusted_table.range.0 > 1 && table.range.2 != 0 {
+                    adjusted_table.range.2 += 1;
+                }
+                
+                let col_names = if table.column_names.is_empty() && !sheets[idx].0.is_empty() {
+                    let schema = sheets[idx].0[0].schema();
+                    let (_, start_col, _, end_col) = adjusted_table.range;
+                    schema.fields()[start_col..=end_col]
+                        .iter()
+                        .map(|f| f.name().clone())
+                        .collect()
+                } else {
+                    table.column_names.clone()
+                };
+                
+                let table_xml = xml::generate_table_xml(&adjusted_table, global_table_id as u32, &col_names);
+                zipper
+                    .add_file_from_memory(
+                        table_xml.into_bytes(),
+                        format!("xl/tables/table{}.xml", global_table_id)
+                    )
+                    .compression_level(CompressionLevel::fast())
+                    .done();
+                global_table_id += 1;
+            }
+        }
+        
+        let has_images = !sheet_config.images.is_empty();
+        if has_charts || has_images {
+            let drawing_xml = generate_drawing_xml_combined(&sheet_config.charts, &sheet_config.images);
+            zipper
+                .add_file_from_memory(drawing_xml.into_bytes(), format!("xl/drawings/drawing{}.xml", drawing_id))
+                .compression_level(CompressionLevel::fast())
+                .done();
+            
+            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images);
+            
+            zipper
+                .add_file_from_memory(drawing_rels.into_bytes(), format!("xl/drawings/_rels/drawing{}.xml.rels", drawing_id))
+                .compression_level(CompressionLevel::fast())
+                .done();
+            
+            for chart in &sheet_config.charts {
+                let chart_xml = xml::generate_chart_xml(chart, sheets[idx].1);
+                zipper
+                    .add_file_from_memory(
+                        chart_xml.into_bytes(),
+                        format!("xl/charts/chart{}.xml", global_chart_id)
+                    )
+                    .compression_level(CompressionLevel::fast())
+                    .done();
+                global_chart_id += 1;
+            }
+            
+            for (img_idx, image) in sheet_config.images.iter().enumerate() {
+                zipper
+                    .add_file_from_memory(
+                        image.image_data.clone(),
+                        format!("xl/media/image{}.{}", img_idx + 1, image.extension)
+                    )
+                    .compression_level(CompressionLevel::fast())
+                    .done();
+            }
+            
+            drawing_id += 1;
+        }
+    }
+
+    write_zip_to_buffer(zipper)
+}
+
+
 pub fn write_multiple_sheets_arrow(
     sheets: &[(Vec<RecordBatch>, String)],
     filename: &str,
@@ -727,6 +1114,14 @@ fn write_zip_to_file(mut zipper: ZipArchive, filename: &str) -> Result<(), Write
     file.flush()?;
     file.sync_all()?;
     Ok(())
+}
+
+fn write_zip_to_buffer(mut zipper: ZipArchive) -> Result<Vec<u8>, WriteError> {
+    let mut buffer = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut buffer);
+    zipper.write(&mut cursor)
+        .map_err(|e| WriteError::Validation(e.to_string()))?;
+    Ok(buffer)
 }
 
 fn validate_sheet_name(name: &str) -> Result<(), WriteError> {
