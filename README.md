@@ -126,7 +126,8 @@ jet.write_sheet_arrow(
     hidden_columns=None,           # List[int] - column indices to hide
     hidden_rows=None,              # List[int] - row indices to hide
     right_to_left=False,           # Enable RTL layout
-    data_start_row=0               # Skip rows for auto-width calculation
+    data_start_row=0,              # Skip rows for auto-width calculation
+    header_content=None            # List[(row, col, text)] - custom header rows
 )
 ```
 
@@ -173,7 +174,8 @@ jet.write_sheets_arrow(
     "hidden_columns": List[int],
     "hidden_rows": List[int],
     "right_to_left": bool,
-    "data_start_row": int
+    "data_start_row": int,
+    "header_content": List[Tuple[int, int, str]]
 }
 ```
 
@@ -198,6 +200,161 @@ sheets = [
 ]
 
 jet.write_sheets_arrow(sheets, "report.xlsx", num_threads=4)
+```
+
+
+### In-Memory Bytes API (No File I/O)
+
+#### `write_sheet_arrow_to_bytes()`
+
+Returns Excel file as bytes instead of writing to disk. Identical parameters to `write_sheet_arrow()` except returns bytes instead of writing to a file.
+
+```python
+excel_bytes = jet.write_sheet_arrow_to_bytes(
+    arrow_data,                    # DataFrame or Arrow RecordBatch
+    sheet_name=None,               # Sheet name (default: "Sheet1")
+    auto_filter=False,             # Enable autofilter on headers
+    freeze_rows=0,                 # Number of rows to freeze
+    freeze_cols=0,                 # Number of columns to freeze
+    auto_width=False,              # Auto-calculate column widths
+    styled_headers=False,          # Apply bold styling to headers
+    write_header_row=True,         # Write column names as first row
+    column_widths=None,            # Dict[str, float|str] - manual widths
+    column_formats=None,           # Dict[str, str] - number formats
+    merge_cells=None,              # List[(row, col, row, col)] - merge ranges
+    data_validations=None,         # List[dict] - validation rules
+    hyperlinks=None,               # List[(row, col, url, display)]
+    row_heights=None,              # Dict[int, float] - row heights
+    cell_styles=None,              # List[dict] - individual cell styles
+    formulas=None,                 # List[(row, col, formula, cached_value)]
+    conditional_formats=None,      # List[dict] - conditional formatting
+    tables=None,                   # List[dict] - Excel table definitions
+    charts=None,                   # List[dict] - Excel chart definitions
+    images=None,                   # List[dict] - Excel image definitions
+    gridlines_visible=True,        # Show worksheet gridlines
+    zoom_scale=None,               # Zoom percentage 10-400
+    tab_color=None,                # Sheet tab color (ARGB hex)
+    default_row_height=None,       # Default row height in points
+    hidden_columns=None,           # List[int] - column indices to hide
+    hidden_rows=None,              # List[int] - row indices to hide
+    right_to_left=False,           # Enable RTL layout
+    data_start_row=0,              # Skip rows for auto-width calculation
+    header_content=None            # List[(row, col, text)] - custom header rows
+)
+```
+
+**Use Cases:**
+- Web APIs and HTTP responses
+- Cloud functions (AWS Lambda, Google Cloud Functions)
+- Streaming scenarios
+- In-memory processing
+- Base64 encoding for JSON APIs
+
+**Examples:**
+
+```python
+import polars as pl
+import jetxl as jet
+
+df = pl.DataFrame({
+    "Name": ["Alice", "Bob"],
+    "Age": [25, 30],
+    "Salary": [50000, 60000]
+})
+
+# Generate Excel in memory
+excel_bytes = jet.write_sheet_arrow_to_bytes(
+    df.to_arrow(),
+    sheet_name="Employees",
+    styled_headers=True,
+    auto_width=True
+)
+
+# Save to file
+with open("output.xlsx", "wb") as f:
+    f.write(excel_bytes)
+
+# Or use in web framework (Flask)
+from flask import Response
+
+@app.route('/download')
+def download():
+    excel_bytes = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+    return Response(
+        excel_bytes,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment;filename=data.xlsx'}
+    )
+
+# Or base64 encode for API
+import base64
+encoded = base64.b64encode(excel_bytes).decode('utf-8')
+
+# Or return from Lambda
+def lambda_handler(event, context):
+    excel_bytes = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+    return {
+        'statusCode': 200,
+        'body': base64.b64encode(excel_bytes).decode('utf-8'),
+        'isBase64Encoded': True,
+        'headers': {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        }
+    }
+```
+
+#### `write_sheets_arrow_to_bytes()`
+
+Write multiple sheets to bytes. Identical to `write_sheets_arrow()` but returns bytes.
+
+```python
+excel_bytes = jet.write_sheets_arrow_to_bytes(
+    sheets,        # List[dict] with data, name, and any formatting options
+    num_threads=1  # Parallel threads for XML generation
+)
+```
+
+**Example:**
+
+```python
+sheets = [
+    {
+        "data": df1.to_arrow(),
+        "name": "Sales",
+        "styled_headers": True,
+        "freeze_rows": 1
+    },
+    {
+        "data": df2.to_arrow(),
+        "name": "Costs",
+        "auto_width": True
+    }
+]
+
+# Generate multi-sheet Excel in memory
+excel_bytes = jet.write_sheets_arrow_to_bytes(sheets, num_threads=2)
+
+# FastAPI example
+from fastapi.responses import Response
+
+@app.get("/report")
+async def generate_report():
+    excel_bytes = jet.write_sheets_arrow_to_bytes(sheets, num_threads=2)
+    return Response(
+        content=excel_bytes,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment; filename=report.xlsx'}
+    )
+
+# S3 upload without local file
+import boto3
+s3 = boto3.client('s3')
+s3.put_object(
+    Bucket='my-bucket',
+    Key='reports/monthly.xlsx',
+    Body=excel_bytes,
+    ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+)
 ```
 
 ### Dict API (Legacy - Backward Compatible)

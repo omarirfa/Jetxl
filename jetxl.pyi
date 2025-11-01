@@ -1676,6 +1676,206 @@ def write_sheets_arrow(
     """
     ...
 
+def write_sheet_arrow_to_bytes(
+    arrow_data: Any,
+    sheet_name: Optional[str] = None,
+    auto_filter: bool = False,
+    freeze_rows: int = 0,
+    freeze_cols: int = 0,
+    auto_width: bool = False,
+    styled_headers: bool = False,
+    write_header_row: bool = True,
+    column_widths: Optional[Dict[str, Union[float, int, str]]] = None,
+    column_formats: Optional[Dict[str, str]] = None,
+    merge_cells: Optional[List[Tuple[int, int, int, int]]] = None,
+    data_validations: Optional[List[DataValidation]] = None,
+    hyperlinks: Optional[List[Tuple[int, int, str, Optional[str]]]] = None,
+    row_heights: Optional[Dict[int, float]] = None,
+    cell_styles: Optional[List[CellStyleDict]] = None,
+    formulas: Optional[List[Tuple[int, int, str, Optional[str]]]] = None,
+    conditional_formats: Optional[List[ConditionalFormat]] = None,
+    tables: Optional[List[ExcelTable]] = None,
+    charts: Optional[List[ExcelChart]] = None,
+    images: Optional[List[ExcelImage]] = None,
+    gridlines_visible: bool = True,
+    zoom_scale: Optional[int] = None,
+    tab_color: Optional[str] = None,
+    default_row_height: Optional[float] = None,
+    hidden_columns: Optional[List[int]] = None,
+    hidden_rows: Optional[List[int]] = None,
+    right_to_left: bool = False,
+    data_start_row: int = 0,
+    header_content: Optional[List[Tuple[int, int, str]]] = None,
+) -> bytes:
+    """Write Arrow data to Excel bytes (in-memory, no file I/O).
+    
+    Identical to write_sheet_arrow() but returns bytes instead of writing to file.
+    Perfect for web APIs, Lambda, streaming scenarios.
+    
+    Returns:
+        bytes: Complete Excel file as bytes (.xlsx format)
+   
+    Examples:
+        Flask endpoint:
+            >>> from flask import Response
+            >>> 
+            >>> @app.route('/export')
+            >>> def export():
+            ...     df = get_sales_data()
+            ...     excel = jet.write_sheet_arrow_to_bytes(
+            ...         df.to_arrow(),
+            ...         styled_headers=True,
+            ...         auto_width=True
+            ...     )
+            ...     return Response(
+            ...         excel,
+            ...         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ...         headers={'Content-Disposition': 'attachment;filename=sales.xlsx'}
+            ...     )
+        
+        FastAPI with streaming:
+            >>> from fastapi.responses import StreamingResponse
+            >>> from io import BytesIO
+            >>> 
+            >>> @app.get("/download")
+            >>> async def download():
+            ...     excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            ...     return StreamingResponse(
+            ...         BytesIO(excel),
+            ...         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ...         headers={'Content-Disposition': 'attachment; filename=report.xlsx'}
+            ...     )
+        
+        AWS Lambda:
+            >>> import base64
+            >>> 
+            >>> def lambda_handler(event, context):
+            ...     df = query_database()
+            ...     excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            ...     return {
+            ...         'statusCode': 200,
+            ...         'body': base64.b64encode(excel).decode('utf-8'),
+            ...         'isBase64Encoded': True,
+            ...         'headers': {
+            ...             'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ...             'Content-Disposition': 'attachment; filename=data.xlsx'
+            ...         }
+            ...     }
+        
+        S3 upload without temp file:
+            >>> import boto3
+            >>> 
+            >>> s3 = boto3.client('s3')
+            >>> excel = jet.write_sheet_arrow_to_bytes(
+            ...     df.to_arrow(),
+            ...     sheet_name="Report"
+            ... )
+            >>> s3.put_object(
+            ...     Bucket='reports',
+            ...     Key='2024/sales.xlsx',
+            ...     Body=excel,
+            ...     ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            ... )
+        
+        JSON API response:
+            >>> import base64
+            >>> 
+            >>> excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            >>> return jsonify({
+            ...     'filename': 'report.xlsx',
+            ...     'data': base64.b64encode(excel).decode('utf-8'),
+            ...     'size': len(excel)
+            ... })
+        
+        Email attachment:
+            >>> from email.mime.application import MIMEApplication
+            >>> 
+            >>> excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            >>> attachment = MIMEApplication(excel)
+            >>> attachment.add_header('Content-Disposition', 'attachment', filename='report.xlsx')
+            >>> msg.attach(attachment)
+        
+        Django view:
+            >>> from django.http import HttpResponse
+            >>> 
+            >>> def export_view(request):
+            ...     excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            ...     response = HttpResponse(
+            ...         excel,
+            ...         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            ...     )
+            ...     response['Content-Disposition'] = 'attachment; filename=export.xlsx'
+            ...     return response
+        
+        Azure Functions:
+            >>> import azure.functions as func
+            >>> 
+            >>> def main(req: func.HttpRequest) -> func.HttpResponse:
+            ...     excel = jet.write_sheet_arrow_to_bytes(df.to_arrow())
+            ...     return func.HttpResponse(
+            ...         excel,
+            ...         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ...         headers={'Content-Disposition': 'attachment; filename=data.xlsx'}
+            ...     )
+            
+            """
+    ... 
+
+def write_sheets_arrow_to_bytes(
+    sheets_data: List[SheetConfig],
+    num_threads: int = 1,
+) -> bytes:
+    """Write multiple sheets to Excel bytes (in-memory, no file I/O).
+    
+    Identical to write_sheets_arrow() but returns bytes instead of writing to file.
+    
+    Returns:
+        bytes: Complete Excel file as bytes (.xlsx format)
+    
+
+    Examples:
+        Multi-sheet API endpoint:
+            >>> @app.route('/quarterly-report')
+            >>> def quarterly():
+            ...     sheets = [
+            ...         {"data": q1_df.to_arrow(), "name": "Q1", "styled_headers": True},
+            ...         {"data": q2_df.to_arrow(), "name": "Q2", "styled_headers": True},
+            ...         {"data": q3_df.to_arrow(), "name": "Q3", "styled_headers": True},
+            ...         {"data": q4_df.to_arrow(), "name": "Q4", "styled_headers": True}
+            ...     ]
+            ...     excel = jet.write_sheets_arrow_to_bytes(sheets, num_threads=4)
+            ...     return Response(excel, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        
+        Google Cloud Storage:
+            >>> from google.cloud import storage
+            >>> 
+            >>> client = storage.Client()
+            >>> bucket = client.bucket('reports')
+            >>> blob = bucket.blob('monthly/report.xlsx')
+            >>> 
+            >>> excel = jet.write_sheets_arrow_to_bytes(sheets, num_threads=2)
+            >>> blob.upload_from_string(
+            ...     excel,
+            ...     content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            ... )
+        
+        Celery background task:
+            >>> @celery.task
+            >>> def generate_report(user_id):
+            ...     sheets = fetch_user_data(user_id)
+            ...     excel = jet.write_sheets_arrow_to_bytes(sheets, num_threads=4)
+            ...     
+            ...     # Email it
+            ...     send_email(
+            ...         to=user.email,
+            ...         subject='Your Report',
+            ...         attachments=[('report.xlsx', excel)]
+            ...     )
+            """
+
+    ...
+
+
 def write_sheet(
     columns: Dict[str, List[Any]],
     filename: str,
