@@ -977,7 +977,7 @@ table = {
 
 ## 📊 Excel Charts
 
-Create professional charts and visualizations directly in your Excel files. Jetxl supports six chart types with extensive customization options.
+Create professional charts and visualizations directly in your Excel files. Jetxl supports six chart types with extensive customization options including stacked charts, data labels, styling, and advanced formatting.
 
 ### Chart Types
 
@@ -1026,37 +1026,6 @@ jet.write_sheet_arrow(
     charts=charts
 )
 ```
-### Custom Series Names
-
-By default, series names come from column headers. Override them for better labels:
-```python
-df = pl.DataFrame({
-    "Month": ["Jan", "Feb", "Mar"],
-    "Rev_North": [1000, 1100, 1050],
-    "Rev_South": [800, 850, 900],
-    "Rev_West": [1200, 1250, 1300]
-})
-
-charts = [{
-    "chart_type": "column",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 3,
-    "end_col": 3,
-    "from_col": 5,
-    "from_row": 1,
-    "to_col": 13,
-    "to_row": 16,
-    "title": "Regional Sales",
-    "category_col": 0,
-    # Override column names with friendly labels
-    "series_names": ["North Region", "South Region", "West Region"]
-    # Without this, legend would show "Rev_North", "Rev_South", "Rev_West"
-}]
-
-jet.write_sheet_arrow(df.to_arrow(), "chart.xlsx", charts=charts)
-```
-
 
 ### Chart Configuration
 
@@ -1068,10 +1037,14 @@ chart = {
     "chart_type": "column",  # column, bar, line, pie, scatter, area
     
     # Required: Data range (1-indexed for rows, 0-indexed for columns)
+    # Option 1: Individual parameters
     "start_row": 1,          # First data row (including header)
     "start_col": 0,          # First data column
     "end_row": 10,           # Last data row
     "end_col": 3,            # Last data column
+    
+    # Option 2: Tuple format (alternative to above)
+    "data_range": (0, 0, 9, 3),  # (start_row, start_col, end_row, end_col)
     
     # Required: Chart position on worksheet
     "from_col": 5,           # Starting column for chart
@@ -1086,13 +1059,37 @@ chart = {
     "show_legend": True,                # Show/hide legend
     "legend_position": "right",         # Legend position: "right", "left", "top", "bottom", "none"
     "x_axis_title": "Categories",       # X-axis label
-    "y_axis_title": "Values"           # Y-axis label
+    "y_axis_title": "Values",           # Y-axis label
+    
+    # Optional: Advanced styling
+    "stacked": True,                    # Stack series (column, bar, line, area)
+    "percent_stacked": True,            # Stack as 100% (column, bar, line, area)
+    "show_data_labels": True,           # Show data labels on chart
+    "chart_style": 104,                 # Excel chart style (1-48)
+    
+    # Optional: Axis scaling
+    "axis_min": 0.0,                    # Minimum Y-axis value
+    "axis_max": 100.0,                  # Maximum Y-axis value
+    
+    # Optional: Title styling
+    "title_bold": True,                 # Bold title text
+    "title_font_size": 1800,            # Title font size (hundredths of point, e.g., 1800 = 18pt)
+    "title_color": "FF0000",            # Title color (ARGB hex)
+    
+    # Optional: Axis title styling
+    "axis_title_bold": True,            # Bold axis title text
+    "axis_title_font_size": 1200,       # Axis title font size (hundredths of point)
+    "axis_title_color": "00B050",       # Axis title color (ARGB hex)
+    
+    # Optional: Legend styling
+    "legend_bold": True,                # Bold legend text
+    "legend_font_size": 1000,           # Legend font size (hundredths of point)
 }
 ```
 
-### Column Chart
+### Stacked Charts
 
-Vertical bars comparing values across categories.
+Create stacked charts to show composition or percent stacked to show proportions:
 
 ```python
 import polars as pl
@@ -1101,95 +1098,363 @@ import jetxl as jet
 df = pl.DataFrame({
     "Quarter": ["Q1", "Q2", "Q3", "Q4"],
     "Revenue": [25000, 28000, 31000, 35000],
-    "Profit": [5000, 6500, 7200, 8500]
+    "Profit": [5000, 6500, 7200, 8500],
+    "Expenses": [20000, 21500, 23800, 26500]
 })
 
-charts = [{
+# Regular stacked column chart
+stacked_chart = [{
     "chart_type": "column",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 4,
-    "end_col": 2,
-    "from_col": 4,
-    "from_row": 1,
-    "to_col": 12,
-    "to_row": 15,
-    "title": "Quarterly Performance",
+    "data_range": (0, 0, 3, 3),
+    "from_col": 5,
+    "from_row": 0,
+    "to_col": 15,
+    "to_row": 20,
+    "title": "Stacked Revenue Components",
     "category_col": 0,
-    "series_names": ["Revenue", "Profit"],
+    "series_names": ["Revenue", "Profit", "Expenses"],
+    "stacked": True,  # Stack the series
+    "show_data_labels": True,
     "x_axis_title": "Quarter",
-    "y_axis_title": "Amount ($)",
-    "show_legend": True
+    "y_axis_title": "Amount ($)"
 }]
 
-jet.write_sheet_arrow(df.to_arrow(), "column_chart.xlsx", charts=charts)
+# Percent stacked column chart
+percent_chart = [{
+    "chart_type": "column",
+    "data_range": (0, 0, 3, 3),
+    "from_col": 5,
+    "from_row": 22,
+    "to_col": 15,
+    "to_row": 42,
+    "title": "Percentage Distribution",
+    "category_col": 0,
+    "series_names": ["Revenue", "Profit", "Expenses"],
+    "percent_stacked": True,  # Stack as 100%
+    "show_data_labels": True,
+    "x_axis_title": "Quarter",
+    "y_axis_title": "Percentage"
+}]
+
+jet.write_sheet_arrow(
+    df.to_arrow(),
+    "stacked_charts.xlsx",
+    charts=[*stacked_chart, *percent_chart]
+)
 ```
 
-### Bar Chart
+**Note:** `stacked` and `percent_stacked` work with column, bar, line, and area charts.
 
-Horizontal bars, useful for comparing many items or long category names.
+### Understanding Chart Styles
+
+Excel provides 48 pre-defined chart styles that apply coordinated colors, effects, and formatting. Each chart type interprets these styles differently.
+
+**Chart Style Numbers (1-48):**
+
+Chart styles are organized into categories:
+- **1-10**: Colorful variations with different color schemes
+- **11-16**: Monochrome styles (black, white, gray variations)
+- **17-32**: Colorful outlined styles with borders
+- **33-40**: Soft color palettes
+- **41-48**: Modern gradient and flat design styles
+
+**Popular Styles by Use Case:**
+```python
+# Professional/Corporate
+"chart_style": 2    # Blue colorful
+"chart_style": 11   # Monochrome gray
+"chart_style": 26   # Dark professional
+
+# Modern/Vibrant
+"chart_style": 42   # Gradient modern
+"chart_style": 102  # Contemporary (if available)
+"chart_style": 104  # Bright modern
+
+# Print-Friendly
+"chart_style": 11   # Black and white
+"chart_style": 15   # High contrast
+```
+
+**How to Find Your Preferred Style:**
+
+The best way to discover chart styles is to test them in Excel:
+1. Create a chart in Excel manually
+2. Click the chart and go to Chart Design → Chart Styles
+3. Preview different styles in the gallery
+4. Note the style you like - styles are numbered in the gallery order
+5. Use that number in Jetxl's `chart_style` parameter
+
+**Example - Testing Multiple Styles:**
+```python
+# Create the same chart with different styles to compare
+for style_num in [2, 11, 26, 42, 104]:
+    charts = [{
+        "chart_type": "column",
+        "data_range": (0, 0, 3, 2),
+        "from_col": 5,
+        "from_row": 0,
+        "to_col": 15,
+        "to_row": 20,
+        "title": f"Chart Style {style_num}",
+        "chart_style": style_num,
+        "category_col": 0
+    }]
+    jet.write_sheet_arrow(df.to_arrow(), f"style_{style_num}.xlsx", charts=charts)
+```
+
+**Chart Style Reference:**
+- [Excel Chart Styles Gallery](https://support.microsoft.com/en-us/office/available-chart-types-in-office-a6187218-807e-4103-9e0a-27cdb19afb90) - Microsoft's official guide
+- Styles are part of the Office Open XML standard
+- Different Excel versions may render styles slightly differently
+- Not all style numbers work with all chart types
+
+### Understanding Font Sizes
+
+Font sizes in charts use Excel's internal unit system based on the Office Open XML (OOXML) standard.
+
+**Font Size Format:**
+- Values are in **hundredths of a point**
+- 1 point = 100 units
+- Standard Excel points = units ÷ 100
+
+**Common Font Size Conversions:**
+```python
+# Title Sizes
+"title_font_size": 800   # 8pt  - Small title
+"title_font_size": 1000  # 10pt - Compact title
+"title_font_size": 1200  # 12pt - Standard title
+"title_font_size": 1400  # 14pt - Medium title
+"title_font_size": 1600  # 16pt - Large title
+"title_font_size": 1800  # 18pt - Extra large title
+"title_font_size": 2400  # 24pt - Presentation title
+"title_font_size": 3200  # 32pt - Header/banner
+
+# Axis Title Sizes
+"axis_title_font_size": 900   # 9pt  - Small
+"axis_title_font_size": 1000  # 10pt - Standard
+"axis_title_font_size": 1100  # 11pt - Medium
+"axis_title_font_size": 1200  # 12pt - Large
+
+# Legend Sizes
+"legend_font_size": 800   # 8pt  - Compact
+"legend_font_size": 900   # 9pt  - Small
+"legend_font_size": 1000  # 10pt - Standard
+"legend_font_size": 1100  # 11pt - Medium
+```
+
+**Why Hundredths of a Point?**
+- Precise control over text sizing
+- Matches Excel's internal OOXML format
+- Allows fractional point sizes (e.g., 1050 = 10.5pt)
+- Same system used throughout Microsoft Office
+
+**Quick Conversion Formula:**
+```python
+# Points to hundredths
+hundredths = points * 100
+
+# Hundredths to points
+points = hundredths / 100
+
+# Example: 14pt title
+title_font_size = 14 * 100  # = 1400
+```
+
+### Understanding Axis Scaling
+
+Control the Y-axis range to focus on relevant data ranges or maintain consistent scales across charts.
+
+**Basic Axis Scaling:**
+```python
+charts = [{
+    "chart_type": "line",
+    "data_range": (0, 0, 3, 1),
+    "from_col": 5, "from_row": 0,
+    "to_col": 15, "to_row": 20,
+    "title": "Test Scores",
+    "category_col": 0,
+    "axis_min": 0.0,      # Y-axis starts at 0
+    "axis_max": 100.0,    # Y-axis ends at 100
+}]
+```
+
+**When to Use Axis Scaling:**
+
+1. **Percentage Data (0-100%):**
+```python
+"axis_min": 0.0,
+"axis_max": 100.0,  # Perfect for showing 0-100% range
+```
+
+2. **Normalized Data (0-1):**
+```python
+"axis_min": 0.0,
+"axis_max": 1.0,  # For decimal percentages (use with percent_stacked)
+```
+
+3. **Focus on Variance:**
+```python
+# Data ranges from 85-95, default would show 0-100
+"axis_min": 80.0,
+"axis_max": 100.0,  # Zoom in to show meaningful differences
+```
+
+4. **Compare Multiple Charts:**
+```python
+# Use same scale across all charts for fair comparison
+"axis_min": 0.0,
+"axis_max": 50000.0,  # All revenue charts use same scale
+```
+
+5. **Symmetric Ranges:**
+```python
+# For profit/loss or change data
+"axis_min": -10000.0,
+"axis_max": 10000.0,  # Symmetric around zero
+```
+
+**Special Case - Percent Stacked Charts:**
+```python
+# When using percent_stacked, values are 0.0 to 1.0
+charts = [{
+    "chart_type": "column",
+    "data_range": (0, 0, 3, 3),
+    "percent_stacked": True,
+    "axis_min": 0.0,    # 0% = 0.0
+    "axis_max": 1.0,    # 100% = 1.0
+    "y_axis_title": "Percentage"
+}]
+```
+
+**Axis Scaling Best Practices:**
+- Always start at 0.0 for bar/column charts to avoid misleading visuals
+- Use axis_min > 0 only for line charts showing trends
+- For percent_stacked, always use axis_min=0.0 and axis_max=1.0
+- Omit axis_min/axis_max to let Excel auto-scale
+- Use consistent scales when comparing multiple charts
+
+### Advanced Chart Styling
+
+Customize chart appearance with styling options:
 
 ```python
+import polars as pl
+import jetxl as jet
+
 df = pl.DataFrame({
-    "Product": ["Widget A", "Widget B", "Widget C", "Widget D"],
-    "Units Sold": [150, 230, 180, 290]
+    "Month": ["Jan", "Feb", "Mar", "Apr"],
+    "Sales": [10000, 12000, 11000, 13000],
+    "Target": [9000, 10000, 12000, 14000]
 })
 
 charts = [{
     "chart_type": "bar",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 4,
-    "end_col": 1,
-    "from_col": 3,
-    "from_row": 1,
-    "to_col": 10,
-    "to_row": 12,
-    "title": "Product Sales Comparison",
-    "category_col": 0,
-    "x_axis_title": "Units",
-    "y_axis_title": "Product"
+    "data_range": (0, 0, 3, 2),
+    "from_col": 5,
+    "from_row": 0,
+    "to_col": 15,
+    "to_row": 20,
+    
+    # Title styling
+    "title": "Sales vs Target",
+    "title_bold": True,
+    "title_font_size": 1800,      # 18pt (in hundredths of point)
+    "title_color": "0070C0",      # Blue (ARGB hex without alpha)
+    
+    # Axis titles with styling
+    "x_axis_title": "Amount ($)",
+    "y_axis_title": "Month",
+    "axis_title_bold": True,
+    "axis_title_font_size": 1200,  # 12pt
+    "axis_title_color": "00B050",  # Green
+    
+    # Legend styling
+    "show_legend": True,
+    "legend_position": "bottom",
+    "legend_bold": True,
+    "legend_font_size": 1000,      # 10pt
+    
+    # Chart style and data labels
+    "chart_style": 104,             # Apply Excel chart style
+    "show_data_labels": True,
+    
+    # Axis scaling
+    "axis_min": 0.0,
+    "axis_max": 15000.0,
+    
+    "category_col": 0
 }]
 
-jet.write_sheet_arrow(df.to_arrow(), "bar_chart.xlsx", charts=charts)
+jet.write_sheet_arrow(df.to_arrow(), "styled_chart.xlsx", charts=charts)
 ```
 
-### Line Chart
+**Chart Style Numbers:**
+- Excel supports chart styles numbered 1-48
+- Each chart type has different style variations
+- Common styles: 2 (colorful), 11 (monochrome), 26 (dark), 42 (gradient)
+- Experiment with different numbers to find your preferred style
 
-Perfect for showing trends over time or continuous data.
+**Font Sizes:**
+- Font sizes are specified in hundredths of a point
+- Examples: 800 = 8pt, 1000 = 10pt, 1200 = 12pt, 1800 = 18pt
+
+### Data Labels on Charts
+
+Add data labels to show values directly on chart elements:
 
 ```python
 df = pl.DataFrame({
-    "Week": ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"],
-    "Website": [1200, 1350, 1280, 1450, 1520],
-    "Mobile": [800, 920, 1050, 1180, 1300],
-    "Desktop": [400, 430, 230, 270, 220]
+    "Product": ["A", "B", "C", "D"],
+    "Sales": [250, 380, 420, 290]
+})
+
+charts = [{
+    "chart_type": "column",
+    "data_range": (0, 0, 3, 1),
+    "from_col": 3,
+    "from_row": 0,
+    "to_col": 11,
+    "to_row": 15,
+    "title": "Product Sales",
+    "category_col": 0,
+    "show_data_labels": True,  # Display values on bars
+    "x_axis_title": "Product",
+    "y_axis_title": "Units Sold"
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "chart_with_labels.xlsx", charts=charts)
+```
+
+### Axis Scaling
+
+Control the Y-axis range for better visualization:
+
+```python
+df = pl.DataFrame({
+    "Month": ["Jan", "Feb", "Mar", "Apr"],
+    "Score": [92, 88, 95, 91]
 })
 
 charts = [{
     "chart_type": "line",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 5,
-    "end_col": 3,
-    "from_col": 5,
-    "from_row": 1,
-    "to_col": 13,
-    "to_row": 16,
-    "title": "Traffic Trends by Platform",
+    "data_range": (0, 0, 3, 1),
+    "from_col": 3,
+    "from_row": 0,
+    "to_col": 11,
+    "to_row": 15,
+    "title": "Test Scores",
     "category_col": 0,
-    "series_names": ["Website", "Mobile", "Desktop"],
-    "x_axis_title": "Time Period",
-    "y_axis_title": "Visitors",
-    "show_legend": True
+    "axis_min": 80.0,     # Start Y-axis at 80
+    "axis_max": 100.0,    # End Y-axis at 100
+    "x_axis_title": "Month",
+    "y_axis_title": "Score",
+    "show_data_labels": True
 }]
 
-jet.write_sheet_arrow(df.to_arrow(), "line_chart.xlsx", charts=charts)
+jet.write_sheet_arrow(df.to_arrow(), "scaled_chart.xlsx", charts=charts)
 ```
 
-### Pie Chart
-
-Displays proportions and percentages of a whole.
+### Pie Chart with Styling
 
 ```python
 df = pl.DataFrame({
@@ -1199,88 +1464,48 @@ df = pl.DataFrame({
 
 charts = [{
     "chart_type": "pie",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 4,
-    "end_col": 1,
+    "data_range": (0, 0, 3, 1),
     "from_col": 3,
-    "from_row": 1,
+    "from_row": 0,
     "to_col": 10,
     "to_row": 15,
-    "title": "Sales by Region",
-    "category_col": 0,  # Labels come from this column
-    "show_legend": True
+    "title": "Regional Distribution",
+    "title_bold": True,
+    "title_font_size": 1800,
+    "category_col": 0,
+    "show_data_labels": True,  # Show percentages/values
+    "legend_font_size": 1100
 }]
 
 jet.write_sheet_arrow(df.to_arrow(), "pie_chart.xlsx", charts=charts)
 ```
 
-**Note:** Pie charts typically display one data series. The first numeric column after the category column is used.
-
-### Scatter Chart
-
-Shows relationships between two numeric variables.
+### Scatter Chart with Axis Control
 
 ```python
 df = pl.DataFrame({
-    "Temperature": [65, 70, 75, 80, 85, 90, 95],
-    "Ice Cream Sales": [200, 250, 280, 350, 400, 480, 550],
-    "Coffee Sales": [450, 420, 380, 340, 300, 250, 200]
+    "X": [1, 2, 3, 4, 5],
+    "Y1": [10, 25, 30, 45, 60],
+    "Y2": [15, 20, 35, 40, 55]
 })
 
 charts = [{
     "chart_type": "scatter",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 7,
-    "end_col": 2,
-    "from_col": 4,
-    "from_row": 1,
-    "to_col": 12,
-    "to_row": 16,
-    "title": "Sales vs Temperature",
-    "x_axis_title": "Temperature (°F)",
-    "y_axis_title": "Sales ($)",
-    "series_names": ["Ice Cream", "Coffee"],
-    "show_legend": True
+    "data_range": (0, 0, 4, 2),
+    "from_col": 5,
+    "from_row": 0,
+    "to_col": 15,
+    "to_row": 20,
+    "title": "Correlation Analysis",
+    "axis_min": 0.0,
+    "axis_max": 70.0,
+    "x_axis_title": "X Values",
+    "y_axis_title": "Y Values",
+    "show_data_labels": False,
+    "series_names": ["Series 1", "Series 2"]
 }]
 
 jet.write_sheet_arrow(df.to_arrow(), "scatter_chart.xlsx", charts=charts)
-```
-
-**Note:** For scatter charts, the first column is used for X values, and subsequent columns are Y values for each series.
-
-### Area Chart
-
-Similar to line charts but with filled areas under the lines.
-
-```python
-df = pl.DataFrame({
-    "Year": ["2019", "2020", "2021", "2022", "2023"],
-    "Product A": [1000, 1200, 1400, 1600, 1800],
-    "Product B": [800, 950, 1100, 1300, 1500],
-    "Product C": [600, 700, 850, 950, 1100]
-})
-
-charts = [{
-    "chart_type": "area",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 5,
-    "end_col": 3,
-    "from_col": 5,
-    "from_row": 1,
-    "to_col": 13,
-    "to_row": 16,
-    "title": "Product Sales Growth",
-    "category_col": 0,
-    "series_names": ["Product A", "Product B", "Product C"],
-    "x_axis_title": "Year",
-    "y_axis_title": "Revenue ($)",
-    "show_legend": True
-}]
-
-jet.write_sheet_arrow(df.to_arrow(), "area_chart.xlsx", charts=charts)
 ```
 
 ### Multiple Charts in One Sheet
@@ -1299,214 +1524,106 @@ charts = [
     {
         # Column chart for Revenue and Expenses
         "chart_type": "column",
-        "start_row": 1,
-        "start_col": 0,
-        "end_row": 4,
-        "end_col": 2,
+        "data_range": (0, 0, 3, 2),
         "from_col": 5,
-        "from_row": 1,
-        "to_col": 12,
+        "from_row": 0,
+        "to_col": 13,
         "to_row": 15,
-        "title": "Revenue vs Expenses",
+        "title": "Revenue & Expenses",
+        "title_bold": True,
         "category_col": 0,
-        "series_names": ["Revenue", "Expenses"]
+        "series_names": ["Revenue", "Expenses"],
+        "show_data_labels": True,
+        "x_axis_title": "Month",
+        "y_axis_title": "Amount ($)"
     },
     {
         # Line chart for Profit trend
         "chart_type": "line",
-        "start_row": 1,
-        "start_col": 0,
-        "end_row": 4,
-        "end_col": 0,  # Just Month column
+        "data_range": (0, 0, 3, 3),
         "from_col": 5,
         "from_row": 17,
-        "to_col": 12,
-        "to_row": 30,
+        "to_col": 13,
+        "to_row": 32,
         "title": "Profit Trend",
-        "category_col": 0
+        "title_color": "00B050",
+        "category_col": 0,
+        "series_names": ["Profit"],
+        "x_axis_title": "Month",
+        "y_axis_title": "Profit ($)",
+        "chart_style": 26
     }
 ]
 
 jet.write_sheet_arrow(df.to_arrow(), "multiple_charts.xlsx", charts=charts)
 ```
 
-### Charts with Tables
+### Complete Advanced Chart Example
 
-Combine Excel tables with charts for interactive dashboards:
+Here's a comprehensive example using all available chart features:
 
 ```python
+import polars as pl
+import jetxl as jet
+
 df = pl.DataFrame({
-    "Product": ["Widget A", "Widget B", "Widget C", "Widget D"],
-    "Q1": [100, 150, 120, 180],
-    "Q2": [110, 160, 130, 190],
-    "Q3": [120, 170, 140, 200],
-    "Q4": [130, 180, 150, 210]
+    "Quarter": ["Q1", "Q2", "Q3", "Q4"],
+    "Revenue": [25000, 28000, 31000, 35000],
+    "Profit": [5000, 6500, 7200, 8500],
+    "Expenses": [20000, 21500, 23800, 26500]
 })
 
-# Define table
-tables = [{
-    "name": "SalesData",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 4,
-    "end_col": 4,
-    "style": "TableStyleMedium9"
-}]
-
-# Define chart
 charts = [{
     "chart_type": "column",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 4,
-    "end_col": 4,
-    "from_col": 6,
-    "from_row": 1,
-    "to_col": 14,
-    "to_row": 18,
-    "title": "Quarterly Sales by Product",
+    
+    # Data range - use tuple or individual parameters
+    "data_range": (0, 0, 3, 3),
+    # OR: "start_row": 1, "start_col": 0, "end_row": 4, "end_col": 3,
+    
+    # Chart position
+    "from_col": 5,
+    "from_row": 0,
+    "to_col": 15,
+    "to_row": 20,
+    
+    # Basic settings
+    "title": "Quarterly Financial Performance",
     "category_col": 0,
-    "series_names": ["Q1", "Q2", "Q3", "Q4"]
+    "series_names": ["Revenue", "Profit", "Expenses"],
+    
+    # Stacking
+    "percent_stacked": True,  # Show as percentages
+    
+    # Title styling
+    "title_bold": True,
+    "title_font_size": 1600,
+    "title_color": "0070C0",
+    
+    # Axis configuration
+    "x_axis_title": "Quarter",
+    "y_axis_title": "Percentage",
+    "axis_title_bold": True,
+    "axis_title_font_size": 1200,
+    "axis_title_color": "00B050",
+    "axis_min": 0.0,
+    "axis_max": 1.0,
+    
+    # Legend
+    "show_legend": True,
+    "legend_position": "bottom",
+    "legend_bold": True,
+    "legend_font_size": 1000,
+    
+    # Visual enhancements
+    "show_data_labels": True,
+    "chart_style": 102
 }]
 
 jet.write_sheet_arrow(
     df.to_arrow(),
-    "table_with_chart.xlsx",
-    tables=tables,
+    "complete_chart.xlsx",
     charts=charts
 )
-```
-
-### Charts Across Multiple Sheets
-
-Each sheet can have its own charts:
-
-```python
-df_sales = pl.DataFrame({
-    "Month": ["Jan", "Feb", "Mar"],
-    "Amount": [1000, 1500, 1200]
-})
-
-df_costs = pl.DataFrame({
-    "Month": ["Jan", "Feb", "Mar"],
-    "Amount": [800, 900, 850]
-})
-
-sheets = [
-    {
-        "data": df_sales.to_arrow(),
-        "name": "Sales",
-        "charts": [{
-            "chart_type": "column",
-            "start_row": 1,
-            "start_col": 0,
-            "end_row": 3,
-            "end_col": 1,
-            "from_col": 3,
-            "from_row": 1,
-            "to_col": 10,
-            "to_row": 12,
-            "title": "Sales Trend",
-            "category_col": 0
-        }]
-    },
-    {
-        "data": df_costs.to_arrow(),
-        "name": "Costs",
-        "charts": [{
-            "chart_type": "line",
-            "start_row": 1,
-            "start_col": 0,
-            "end_row": 3,
-            "end_col": 1,
-            "from_col": 3,
-            "from_row": 1,
-            "to_col": 10,
-            "to_row": 12,
-            "title": "Cost Trend",
-            "category_col": 0
-        }]
-    }
-]
-
-jet.write_sheets_arrow(sheets, "multi_sheet_charts.xlsx", num_threads=2)
-```
-
-### Chart Positioning Guide
-
-Chart positions are specified in Excel's column/row coordinates:
-- Columns are 0-indexed (0 = A, 1 = B, 2 = C, etc.)
-- Rows are 1-indexed (1 = first row, 2 = second row, etc.)
-
-```python
-# Position a chart from D2 to L16
-chart = {
-    "from_col": 3,   # Column D (0-indexed: A=0, B=1, C=2, D=3)
-    "from_row": 2,   # Row 2
-    "to_col": 11,    # Column L (0-indexed: K=10, L=11)
-    "to_row": 16,    # Row 16
-    # ... other chart properties
-}
-```
-
-**Sizing recommendations:**
-- Small chart: 6-8 columns wide, 12-15 rows tall
-- Medium chart: 8-12 columns wide, 15-20 rows tall
-- Large chart: 12-16 columns wide, 20-30 rows tall
-
-### Chart Customization Best Practices
-
-1. **Clear Titles**: Always include descriptive chart titles
-   ```python
-   "title": "Q4 Sales Performance by Region"
-   ```
-
-2. **Axis Labels**: Add labels to help readers understand the data
-   ```python
-   "x_axis_title": "Month",
-   "y_axis_title": "Revenue (USD)"
-   ```
-
-3. **Legend Placement**: Show legends for multi-series charts and position appropriately
-   ```python
-   "show_legend": True,
-   "legend_position": "right"  # Options: "right", "left", "top", "bottom", "none"
-   ```
-
-4. **Category Columns**: Specify which column contains category labels
-   ```python
-   "category_col": 0  # First column
-   ```
-
-5. **Series Names**: Provide meaningful names for each data series
-   ```python
-   "series_names": ["2023 Sales", "2024 Sales", "Target"]
-   ```
-
-### Using Charts with Dict API (Legacy)
-
-Charts also work with the dictionary-based API:
-
-```python
-data = {
-    "Month": ["Jan", "Feb", "Mar"],
-    "Sales": [1000, 1200, 1100]
-}
-
-charts = [{
-    "chart_type": "column",
-    "start_row": 1,
-    "start_col": 0,
-    "end_row": 3,
-    "end_col": 1,
-    "from_col": 3,
-    "from_row": 1,
-    "to_col": 10,
-    "to_row": 12,
-    "title": "Monthly Sales"
-}]
-
-jet.write_sheet(data, "legacy_chart.xlsx", charts=charts)
 ```
 
 ## 🖼️ Excel Images

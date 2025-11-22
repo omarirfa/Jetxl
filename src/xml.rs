@@ -626,37 +626,85 @@ pub fn generate_drawing_xml(charts: &[ExcelChart]) -> String {
     xml
 }
 
+fn get_column_letter(col: usize) -> String {
+    let mut buf = [0u8; 4];
+    let len = write_col_letter(col, &mut buf);
+    std::str::from_utf8(&buf[..len]).unwrap().to_string()
+}
+
 /// Generate chart XML
 pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
-    let mut xml = String::with_capacity(5000);
+    let mut xml = String::with_capacity(8000);
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
     xml.push_str("<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" ");
     xml.push_str("xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" ");
-    xml.push_str("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\n");
+    xml.push_str("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" ");
+    xml.push_str("xmlns:c16r2=\"http://schemas.microsoft.com/office/drawing/2015/06/chart\">");
     
+    xml.push_str("<c:date1904 val=\"0\"/>\n");
     xml.push_str("<c:lang val=\"en-US\"/>\n");
+    xml.push_str("<c:roundedCorners val=\"0\"/>\n");
+    
+    // Chart style
+    if let Some(style) = chart.chart_style {
+        xml.push_str("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\">");
+        xml.push_str(&format!("<mc:Choice Requires=\"c14\" xmlns:c14=\"http://schemas.microsoft.com/office/drawing/2007/8/2/chart\"><c14:style val=\"{}\"/></mc:Choice>", style));
+        xml.push_str(&format!("<mc:Fallback><c:style val=\"{}\"/></mc:Fallback>", if style >= 100 { style - 100 } else { style }));
+        xml.push_str("</mc:AlternateContent>\n");
+    }
     
     xml.push_str("<c:chart>\n");
     
-    // Title
+    // Title with formatting
     if let Some(ref title) = chart.title {
         xml.push_str("<c:title>\n");
-        xml.push_str("<c:tx>\n");
-        xml.push_str("<c:rich>\n");
-        xml.push_str("<a:bodyPr/>\n");
+        xml.push_str("<c:tx><c:rich>\n");
+        xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
         xml.push_str("<a:lstStyle/>\n");
-        xml.push_str("<a:p>\n");
-        xml.push_str("<a:pPr>\n");
-        xml.push_str("<a:defRPr/>\n");
+        xml.push_str("<a:p><a:pPr>\n");
+        
+        let font_size = chart.title_font_size.unwrap_or(1400);
+        xml.push_str(&format!("<a:defRPr sz=\"{}\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" spc=\"0\" baseline=\"0\">\n", font_size));
+        
+        if let Some(ref color) = chart.title_color {
+            xml.push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>\n", color));
+        } else {
+            xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+        }
+        
+        xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+        xml.push_str("</a:defRPr>\n");
         xml.push_str("</a:pPr>\n");
         xml.push_str("<a:r>\n");
-        xml.push_str("<a:rPr lang=\"en-US\"/>\n");
+        xml.push_str("<a:rPr lang=\"en-US\"");
+        if chart.title_bold {
+            xml.push_str(" b=\"1\"");
+        }
+        xml.push_str("/>\n");
         xml.push_str(&format!("<a:t>{}</a:t>\n", title));
         xml.push_str("</a:r>\n");
         xml.push_str("</a:p>\n");
-        xml.push_str("</c:rich>\n");
-        xml.push_str("</c:tx>\n");
+        xml.push_str("</c:rich></c:tx>\n");
         xml.push_str("<c:overlay val=\"0\"/>\n");
+        xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+        xml.push_str("<c:txPr>\n");
+        xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+        xml.push_str("<a:lstStyle/>\n");
+        xml.push_str("<a:p><a:pPr>\n");
+        xml.push_str(&format!("<a:defRPr sz=\"{}\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" spc=\"0\" baseline=\"0\">\n", font_size));
+        
+        if let Some(ref color) = chart.title_color {
+            xml.push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>\n", color));
+        } else {
+            xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+        }
+        
+        xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+        xml.push_str("</a:defRPr>\n");
+        xml.push_str("</a:pPr>\n");
+        xml.push_str("<a:endParaRPr lang=\"en-US\"/>\n");
+        xml.push_str("</a:p>\n");
+        xml.push_str("</c:txPr>\n");
         xml.push_str("</c:title>\n");
     }
     
@@ -678,7 +726,7 @@ pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
     
     xml.push_str("</c:plotArea>\n");
     
-    // Legend
+    // Legend with styling
     if chart.show_legend && !matches!(chart.legend_position, LegendPosition::None) {
         xml.push_str("<c:legend>\n");
         xml.push_str(&format!("<c:legendPos val=\"{}\"/>\n", match chart.legend_position {
@@ -689,11 +737,44 @@ pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
             LegendPosition::None => "r",
         }));
         xml.push_str("<c:overlay val=\"0\"/>\n");
+        xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+        xml.push_str("<c:txPr>\n");
+        xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+        xml.push_str("<a:lstStyle/>\n");
+        xml.push_str("<a:p><a:pPr>\n");
+        
+        let legend_size = chart.legend_font_size.unwrap_or(900);
+        xml.push_str(&format!("<a:defRPr sz=\"{}\"", legend_size));
+        if chart.legend_bold {
+            xml.push_str(" b=\"1\"");
+        } else {
+            xml.push_str(" b=\"0\"");
+        }
+        xml.push_str(" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+        xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+        xml.push_str("</a:defRPr>\n");
+        xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+        xml.push_str("</c:txPr>\n");
         xml.push_str("</c:legend>\n");
     }
     
     xml.push_str("<c:plotVisOnly val=\"1\"/>\n");
+    xml.push_str("<c:dispBlanksAs val=\"gap\"/>\n");
+    xml.push_str("<c:showDLblsOverMax val=\"0\"/>\n");
     xml.push_str("</c:chart>\n");
+    
+    xml.push_str("<c:spPr>\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill>\n");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:round/></a:ln>\n");
+    xml.push_str("<a:effectLst/>\n");
+    xml.push_str("</c:spPr>\n");
+    
+    xml.push_str("<c:txPr><a:bodyPr/><a:lstStyle/>\n");
+    xml.push_str("<a:p><a:pPr><a:defRPr/></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+    xml.push_str("</c:txPr>\n");
     
     xml.push_str("<c:printSettings>\n");
     xml.push_str("<c:headerFooter/>\n");
@@ -705,35 +786,138 @@ pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
     xml
 }
 
-fn write_axis_title(xml: &mut String, title: &str) {
+
+
+// Helper function for axis styling
+fn write_axis_title(xml: &mut String, title: &str, chart: &ExcelChart) {
     xml.push_str("<c:title>\n");
-    xml.push_str("<c:tx>\n");
-    xml.push_str("<c:rich>\n");
-    xml.push_str("<a:bodyPr/>\n");
+    xml.push_str("<c:overlay val=\"0\"/>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
     xml.push_str("<a:lstStyle/>\n");
     xml.push_str("<a:p>\n");
     xml.push_str("<a:pPr>\n");
-    xml.push_str("<a:defRPr/>\n");
+    
+    let font_size = chart.axis_title_font_size.unwrap_or(1000);
+    xml.push_str(&format!("<a:defRPr sz=\"{}\"", font_size));
+    if chart.axis_title_bold {
+        xml.push_str(" b=\"1\"");
+    } else {
+        xml.push_str(" b=\"0\"");
+    }
+    xml.push_str(" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    
+    if let Some(ref color) = chart.axis_title_color {
+        xml.push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>\n", color));
+    } else {
+        xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+    }
+    
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
     xml.push_str("</a:pPr>\n");
     xml.push_str("<a:r>\n");
     xml.push_str("<a:rPr lang=\"en-US\"/>\n");
     xml.push_str(&format!("<a:t>{}</a:t>\n", title));
     xml.push_str("</a:r>\n");
+    xml.push_str("<a:endParaRPr lang=\"en-US\"/>\n");
     xml.push_str("</a:p>\n");
-    xml.push_str("</c:rich>\n");
-    xml.push_str("</c:tx>\n");
-    xml.push_str("<c:layout/>\n");
+    xml.push_str("</c:txPr>\n");
     xml.push_str("</c:title>\n");
 }
 
+fn write_data_labels(xml: &mut String, show_values: bool) {
+    xml.push_str("<c:dLbls>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" lIns=\"38100\" tIns=\"19050\" rIns=\"38100\" bIns=\"19050\" anchor=\"ctr\" anchorCtr=\"1\"><a:spAutoFit/></a:bodyPr>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p>\n");
+    xml.push_str("<a:pPr>\n");
+    xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"75000\"/><a:lumOff val=\"25000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
+    xml.push_str("</a:pPr>\n");
+    xml.push_str("<a:endParaRPr lang=\"en-US\"/>\n");
+    xml.push_str("</a:p>\n");
+    xml.push_str("</c:txPr>\n");
+    xml.push_str("<c:dLblPos val=\"ctr\"/>\n");
+    xml.push_str("<c:showLegendKey val=\"0\"/>\n");
+    xml.push_str(&format!("<c:showVal val=\"{}\"/>\n", if show_values { "1" } else { "0" }));
+    xml.push_str("<c:showCatName val=\"0\"/>\n");
+    xml.push_str("<c:showSerName val=\"0\"/>\n");
+    xml.push_str("<c:showPercent val=\"0\"/>\n");
+    xml.push_str("<c:showBubbleSize val=\"0\"/>\n");
+    xml.push_str("<c:showLeaderLines val=\"0\"/>\n");
+    xml.push_str("<c:extLst><c:ext uri=\"{CE6537A1-D6FC-4f65-9D91-7224C49458BB}\" xmlns:c15=\"http://schemas.microsoft.com/office/drawing/2012/chart\">");
+    xml.push_str("<c15:showLeaderLines val=\"1\"/>");
+    xml.push_str("<c15:leaderLines><c:spPr>");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"35000\"/><a:lumOff val=\"65000\"/></a:schemeClr></a:solidFill>");
+    xml.push_str("<a:round/></a:ln>");
+    xml.push_str("<a:effectLst/></c:spPr></c15:leaderLines>");
+    xml.push_str("</c:ext></c:extLst>\n");
+    xml.push_str("</c:dLbls>\n");
+}
+
+// Common axis styling components
+fn write_category_axis_styling(xml: &mut String) {
+    xml.push_str("<c:spPr><a:noFill/>\n");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:round/></a:ln>\n");
+    xml.push_str("<a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"-60000000\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p><a:pPr>\n");
+    xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
+    xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+    xml.push_str("</c:txPr>\n");
+}
+
+fn write_value_axis_styling(xml: &mut String) {
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"-60000000\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p><a:pPr>\n");
+    xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
+    xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+    xml.push_str("</c:txPr>\n");
+}
+
+fn write_major_gridlines(xml: &mut String) {
+    xml.push_str("<c:majorGridlines>\n");
+    xml.push_str("<c:spPr>\n");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:round/></a:ln>\n");
+    xml.push_str("<a:effectLst/>\n");
+    xml.push_str("</c:spPr>\n");
+    xml.push_str("</c:majorGridlines>\n");
+}
 
 fn generate_column_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
     xml.push_str("<c:barChart>\n");
     xml.push_str("<c:barDir val=\"col\"/>\n");
-    xml.push_str("<c:grouping val=\"clustered\"/>\n");
+    xml.push_str(&format!("<c:grouping val=\"{}\"/>\n", 
+        if chart.percent_stacked { "percentStacked" } else if chart.stacked { "stacked" } else { "clustered" }));
+    xml.push_str("<c:varyColors val=\"0\"/>\n");
     
     let (start_row, start_col, end_row, end_col) = chart.data_range;
     let category_col = chart.category_col.unwrap_or(start_col);
+    
+    let accent_colors = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let tint_shade_values = [("tint", "65000"), ("", ""), ("shade", "65000")];
     
     let mut actual_series_idx = 0;
     for col in start_col..=end_col {
@@ -742,35 +926,67 @@ fn generate_column_chart_content(xml: &mut String, chart: &ExcelChart, sheet_nam
         }
         
         let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        let accent_color = accent_colors[actual_series_idx % accent_colors.len()];
+        let (modifier, value) = tint_shade_values[actual_series_idx % tint_shade_values.len()];
         
         xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
         
         // Series name
         xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str(&format!("{}!${}$1", sheet_name, get_column_letter(col)));
         xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
         xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
         xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
         
+        // Series styling with scheme colors and tint/shade
+        xml.push_str("<c:spPr>\n");
+        xml.push_str(&format!("<a:solidFill><a:schemeClr val=\"{}\">", accent_color));
+        if !modifier.is_empty() {
+            xml.push_str(&format!("<a:{} val=\"{}\"/>", modifier, value));
+        }
+        xml.push_str("</a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:ln><a:noFill/></a:ln>\n");
+        xml.push_str("<a:effectLst/>\n");
+        xml.push_str("</c:spPr>\n");
+        xml.push_str("<c:invertIfNegative val=\"0\"/>\n");
+        
+        // Data labels per series for stacked charts
+        if chart.stacked || chart.percent_stacked {
+            write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+        }
+        
         // Category axis data
         xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(category_col), start_row + 1, 
             get_column_letter(category_col), end_row + 1));
         xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
         
         // Values
         xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(col), start_row + 1, 
             get_column_letter(col), end_row + 1));
         xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        // Add extLst with uniqueId for modern Excel compatibility
+        xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+        xml.push_str(&format!("<c16:uniqueId val=\"{{0000000{}-6E8F-43DD-B1F6-30AC1D0140EF}}\"/>", actual_series_idx));
+        xml.push_str("</c:ext></c:extLst>\n");
         
         xml.push_str("</c:ser>\n");
         actual_series_idx += 1;
     }
     
-    xml.push_str("<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"0\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>\n");
+    // Chart-level data labels
+    if !chart.stacked && !chart.percent_stacked {
+        write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+    }
+    
+    xml.push_str("<c:gapWidth val=\"150\"/>\n");
+    if chart.stacked || chart.percent_stacked {
+        xml.push_str("<c:overlap val=\"100\"/>\n");
+    }
     xml.push_str("<c:axId val=\"100000001\"/>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
     xml.push_str("</c:barChart>\n");
@@ -782,45 +998,133 @@ fn generate_column_chart_content(xml: &mut String, chart: &ExcelChart, sheet_nam
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"b\"/>\n");
     if let Some(ref x_title) = chart.x_axis_title {
-        write_axis_title(xml, x_title);
+        write_axis_title(xml, x_title, chart);
     }
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:spPr><a:noFill/>\n");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:round/></a:ln>\n");
+    xml.push_str("<a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"-60000000\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p><a:pPr>\n");
+    xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
+    xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+    xml.push_str("</c:txPr>\n");
     xml.push_str("<c:crossAx val=\"100000002\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
     xml.push_str("<c:auto val=\"1\"/>\n");
     xml.push_str("<c:lblAlgn val=\"ctr\"/>\n");
     xml.push_str("<c:lblOffset val=\"100\"/>\n");
+    xml.push_str("<c:noMultiLvlLbl val=\"0\"/>\n");
     xml.push_str("</c:catAx>\n");
     
     // Value axis
     xml.push_str("<c:valAx>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"l\"/>\n");
+    xml.push_str("<c:majorGridlines>\n");
+    xml.push_str("<c:spPr>\n");
+    xml.push_str("<a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:round/></a:ln>\n");
+    xml.push_str("<a:effectLst/>\n");
+    xml.push_str("</c:spPr>\n");
+    xml.push_str("</c:majorGridlines>\n");
     if let Some(ref y_title) = chart.y_axis_title {
-        write_axis_title(xml, y_title);
+        xml.push_str("<c:title>\n");
+        xml.push_str("<c:overlay val=\"0\"/>\n");
+        xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+        xml.push_str("<c:txPr>\n");
+        xml.push_str("<a:bodyPr rot=\"-5400000\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+        xml.push_str("<a:lstStyle/>\n");
+        xml.push_str("<a:p>\n");
+        xml.push_str("<a:pPr>\n");
+        
+        let font_size = chart.axis_title_font_size.unwrap_or(1000);
+        xml.push_str(&format!("<a:defRPr sz=\"{}\"", font_size));
+        if chart.axis_title_bold {
+            xml.push_str(" b=\"1\"");
+        } else {
+            xml.push_str(" b=\"0\"");
+        }
+        xml.push_str(" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+        
+        if let Some(ref color) = chart.axis_title_color {
+            xml.push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>\n", color));
+        } else {
+            xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+        }
+        
+        xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+        xml.push_str("</a:defRPr>\n");
+        xml.push_str("</a:pPr>\n");
+        xml.push_str("<a:r>\n");
+        xml.push_str("<a:rPr lang=\"en-US\"/>\n");
+        xml.push_str(&format!("<a:t>{}</a:t>\n", y_title));
+        xml.push_str("</a:r>\n");
+        xml.push_str("<a:endParaRPr lang=\"en-US\"/>\n");
+        xml.push_str("</a:p>\n");
+        xml.push_str("</c:txPr>\n");
+        xml.push_str("</c:title>\n");
     }
-    xml.push_str("<c:majorGridlines/>\n");
-    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    
+    // Format code for percentage stacked charts
+    let format_code = if chart.percent_stacked { "0%" } else { "General" };
+    xml.push_str(&format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"1\"/>\n", format_code));
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+    xml.push_str("<c:txPr>\n");
+    xml.push_str("<a:bodyPr rot=\"-60000000\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" anchor=\"ctr\" anchorCtr=\"1\"/>\n");
+    xml.push_str("<a:lstStyle/>\n");
+    xml.push_str("<a:p><a:pPr>\n");
+    xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+    xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\"/><a:lumOff val=\"35000\"/></a:schemeClr></a:solidFill>\n");
+    xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+    xml.push_str("</a:defRPr>\n");
+    xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+    xml.push_str("</c:txPr>\n");
     xml.push_str("<c:crossAx val=\"100000001\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
     xml.push_str("<c:crossBetween val=\"between\"/>\n");
     xml.push_str("</c:valAx>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
 }
 
+// ============================================================================
+// BAR CHART (Horizontal bars - barDir="bar")
+// ============================================================================
 fn generate_bar_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
     xml.push_str("<c:barChart>\n");
     xml.push_str("<c:barDir val=\"bar\"/>\n");
-    xml.push_str("<c:grouping val=\"clustered\"/>\n");
+    xml.push_str(&format!("<c:grouping val=\"{}\"/>\n", 
+        if chart.percent_stacked { "percentStacked" } else if chart.stacked { "stacked" } else { "clustered" }));
+    xml.push_str("<c:varyColors val=\"0\"/>\n");
     
     let (start_row, start_col, end_row, end_col) = chart.data_range;
     let category_col = chart.category_col.unwrap_or(start_col);
+    let accent_colors = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let tint_shade_values = [("tint", "65000"), ("", ""), ("shade", "65000")];
     
     let mut actual_series_idx = 0;
     for col in start_col..=end_col {
@@ -829,31 +1133,60 @@ fn generate_bar_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: 
         }
         
         let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        let accent_color = accent_colors[actual_series_idx % accent_colors.len()];
+        let (modifier, value) = tint_shade_values[actual_series_idx % tint_shade_values.len()];
         
         xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
         
         xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str(&format!("{}!${}$1", sheet_name, get_column_letter(col)));
         xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
         xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
         xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
         
+        xml.push_str("<c:spPr>\n");
+        xml.push_str(&format!("<a:solidFill><a:schemeClr val=\"{}\">", accent_color));
+        if !modifier.is_empty() {
+            xml.push_str(&format!("<a:{} val=\"{}\"/>", modifier, value));
+        }
+        xml.push_str("</a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:ln><a:noFill/></a:ln>\n");
+        xml.push_str("<a:effectLst/>\n");
+        xml.push_str("</c:spPr>\n");
+        xml.push_str("<c:invertIfNegative val=\"0\"/>\n");
+        
+        if chart.stacked || chart.percent_stacked {
+            write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+        }
+        
         xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(category_col), start_row + 1, 
             get_column_letter(category_col), end_row + 1));
         xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
         
         xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(col), start_row + 1, 
             get_column_letter(col), end_row + 1));
         xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
+        
+        xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+        xml.push_str(&format!("<c16:uniqueId val=\"{{0000000{}-6E8F-43DD-B1F6-30AC1D0140EF}}\"/>", actual_series_idx));
+        xml.push_str("</c:ext></c:extLst>\n");
         
         xml.push_str("</c:ser>\n");
         actual_series_idx += 1;
     }
     
+    if !chart.stacked && !chart.percent_stacked {
+        write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+    }
+    
+    xml.push_str("<c:gapWidth val=\"150\"/>\n");
+    if chart.stacked || chart.percent_stacked {
+        xml.push_str("<c:overlap val=\"100\"/>\n");
+    }
     xml.push_str("<c:axId val=\"100000001\"/>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
     xml.push_str("</c:barChart>\n");
@@ -864,39 +1197,64 @@ fn generate_bar_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: 
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"l\"/>\n");
     if let Some(ref x_title) = chart.x_axis_title {
-        write_axis_title(xml, x_title);
+        write_axis_title(xml, x_title, chart);
     }
-    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
-    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
-    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
-    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
-    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
-    xml.push_str("</c:catAx>\n");
-    
-    xml.push_str("<c:valAx>\n");
-    xml.push_str("<c:axId val=\"100000002\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
-    xml.push_str("<c:delete val=\"0\"/>\n");
-    xml.push_str("<c:axPos val=\"b\"/>\n");
-    if let Some(ref y_title) = chart.y_axis_title {
-        write_axis_title(xml, y_title);
-    }
-    xml.push_str("<c:majorGridlines/>\n");
     xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_category_axis_styling(xml);
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:auto val=\"1\"/>\n");
+    xml.push_str("<c:lblAlgn val=\"ctr\"/>\n");
+    xml.push_str("<c:lblOffset val=\"100\"/>\n");
+    xml.push_str("<c:noMultiLvlLbl val=\"0\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"b\"/>\n");
+    write_major_gridlines(xml);
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title, chart);
+    }
+    let format_code = if chart.percent_stacked { "0%" } else { "General" };
+    xml.push_str(&format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"1\"/>\n", format_code));
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_value_axis_styling(xml);
     xml.push_str("<c:crossAx val=\"100000001\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:crossBetween val=\"between\"/>\n");
     xml.push_str("</c:valAx>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
 }
 
+// ============================================================================
+// LINE CHART
+// ============================================================================
 fn generate_line_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
     xml.push_str("<c:lineChart>\n");
-    xml.push_str("<c:grouping val=\"standard\"/>\n");
+    xml.push_str(&format!("<c:grouping val=\"{}\"/>\n", 
+        if chart.percent_stacked { "percentStacked" } else if chart.stacked { "stacked" } else { "standard" }));
+    xml.push_str("<c:varyColors val=\"0\"/>\n");
     
     let (start_row, start_col, end_row, end_col) = chart.data_range;
     let category_col = chart.category_col.unwrap_or(start_col);
+    let accent_colors = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let tint_shade_values = [("tint", "65000"), ("", ""), ("shade", "65000")];
     
     let mut actual_series_idx = 0;
     for col in start_col..=end_col {
@@ -905,32 +1263,59 @@ fn generate_line_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
         }
         
         let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        let accent_color = accent_colors[actual_series_idx % accent_colors.len()];
+        let (modifier, value) = tint_shade_values[actual_series_idx % tint_shade_values.len()];
         
         xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
         
         xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str(&format!("{}!${}$1", sheet_name, get_column_letter(col)));
         xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
         xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
         xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
         
+        xml.push_str("<c:spPr>\n");
+        xml.push_str("<a:ln w=\"28575\" cap=\"rnd\">\n");
+        xml.push_str(&format!("<a:solidFill><a:schemeClr val=\"{}\">", accent_color));
+        if !modifier.is_empty() {
+            xml.push_str(&format!("<a:{} val=\"{}\"/>", modifier, value));
+        }
+        xml.push_str("</a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:round/></a:ln>\n");
+        xml.push_str("<a:effectLst/>\n");
+        xml.push_str("</c:spPr>\n");
         xml.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>\n");
         
+        if chart.stacked || chart.percent_stacked {
+            write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+        }
+        
         xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(category_col), start_row + 1, 
             get_column_letter(category_col), end_row + 1));
         xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
         
         xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(col), start_row + 1, 
             get_column_letter(col), end_row + 1));
         xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
         
+        xml.push_str("<c:smooth val=\"0\"/>\n");
+        
+        xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+        xml.push_str(&format!("<c16:uniqueId val=\"{{0000000{}-6E8F-43DD-B1F6-30AC1D0140EF}}\"/>", actual_series_idx));
+        xml.push_str("</c:ext></c:extLst>\n");
+        
         xml.push_str("</c:ser>\n");
         actual_series_idx += 1;
     }
+    
+    if !chart.stacked && !chart.percent_stacked {
+        write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+    }
+    xml.push_str("<c:smooth val=\"0\"/>\n");
     
     xml.push_str("<c:axId val=\"100000001\"/>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
@@ -942,31 +1327,49 @@ fn generate_line_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"b\"/>\n");
     if let Some(ref x_title) = chart.x_axis_title {
-        write_axis_title(xml, x_title);
+        write_axis_title(xml, x_title, chart);
     }
-    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
-    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
-    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
-    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
-    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
-    xml.push_str("</c:catAx>\n");
-    
-    xml.push_str("<c:valAx>\n");
-    xml.push_str("<c:axId val=\"100000002\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
-    xml.push_str("<c:delete val=\"0\"/>\n");
-    xml.push_str("<c:axPos val=\"l\"/>\n");
-    if let Some(ref y_title) = chart.y_axis_title {
-        write_axis_title(xml, y_title);
-    }
-    xml.push_str("<c:majorGridlines/>\n");
     xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_category_axis_styling(xml);
+    xml.push_str("<c:crossAx val=\"100000002\"/>\n");
+    xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:auto val=\"1\"/>\n");
+    xml.push_str("<c:lblAlgn val=\"ctr\"/>\n");
+    xml.push_str("<c:lblOffset val=\"100\"/>\n");
+    xml.push_str("<c:noMultiLvlLbl val=\"0\"/>\n");
+    xml.push_str("</c:catAx>\n");
+    
+    xml.push_str("<c:valAx>\n");
+    xml.push_str("<c:axId val=\"100000002\"/>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
+    xml.push_str("<c:delete val=\"0\"/>\n");
+    xml.push_str("<c:axPos val=\"l\"/>\n");
+    write_major_gridlines(xml);
+    if let Some(ref y_title) = chart.y_axis_title {
+        write_axis_title(xml, y_title, chart);
+    }
+    let format_code = if chart.percent_stacked { "0%" } else { "General" };
+    xml.push_str(&format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"1\"/>\n", format_code));
+    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:minorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_value_axis_styling(xml);
     xml.push_str("<c:crossAx val=\"100000001\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:crossBetween val=\"between\"/>\n");
     xml.push_str("</c:valAx>\n");
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
 }
 
 fn generate_pie_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
@@ -993,8 +1396,32 @@ fn generate_pie_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: 
         get_column_letter(data_col), end_row + 1));
     xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
     
+    xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+    xml.push_str("<c16:uniqueId val=\"{00000000-6E8F-43DD-B1F6-30AC1D0140EF}\"/>");
+    xml.push_str("</c:ext></c:extLst>\n");
+    
     xml.push_str("</c:ser>\n");
-    xml.push_str("<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"0\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"1\"/><c:showBubbleSize val=\"0\"/></c:dLbls>\n");
+    
+    if chart.show_data_labels.unwrap_or(false) {
+        xml.push_str("<c:dLbls>\n");
+        xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
+        xml.push_str("<c:txPr>\n");
+        xml.push_str("<a:bodyPr rot=\"0\" spcFirstLastPara=\"1\" vertOverflow=\"ellipsis\" vert=\"horz\" wrap=\"square\" lIns=\"38100\" tIns=\"19050\" rIns=\"38100\" bIns=\"19050\" anchor=\"ctr\" anchorCtr=\"1\"><a:spAutoFit/></a:bodyPr>\n");
+        xml.push_str("<a:lstStyle/>\n");
+        xml.push_str("<a:p><a:pPr>\n");
+        xml.push_str("<a:defRPr sz=\"900\" b=\"0\" i=\"0\" u=\"none\" strike=\"noStrike\" kern=\"1200\" baseline=\"0\">\n");
+        xml.push_str("<a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"75000\"/><a:lumOff val=\"25000\"/></a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:latin typeface=\"+mn-lt\"/><a:ea typeface=\"+mn-ea\"/><a:cs typeface=\"+mn-cs\"/>\n");
+        xml.push_str("</a:defRPr>\n");
+        xml.push_str("</a:pPr><a:endParaRPr lang=\"en-US\"/></a:p>\n");
+        xml.push_str("</c:txPr>\n");
+        xml.push_str("<c:showLegendKey val=\"0\"/><c:showVal val=\"1\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"1\"/><c:showBubbleSize val=\"0\"/>\n");
+        xml.push_str("<c:showLeaderLines val=\"1\"/>\n");
+        xml.push_str("</c:dLbls>\n");
+    } else {
+        xml.push_str("<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"0\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"1\"/><c:showBubbleSize val=\"0\"/></c:dLbls>\n");
+    }
+    
     xml.push_str("</c:pieChart>\n");
 }
 
@@ -1003,9 +1430,25 @@ fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_na
     xml.push_str("<c:scatterStyle val=\"lineMarker\"/>\n");
     
     let (start_row, start_col, end_row, end_col) = chart.data_range;
+    let accent_colors = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let tint_shade_values = [("tint", "65000"), ("", ""), ("shade", "65000")];
     
     for (series_idx, col) in (start_col + 1..=end_col).enumerate() {
+        let accent_color = accent_colors[series_idx % accent_colors.len()];
+        let (modifier, value) = tint_shade_values[series_idx % tint_shade_values.len()];
+        
         xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", series_idx, series_idx));
+        
+        xml.push_str("<c:spPr>\n");
+        xml.push_str("<a:ln w=\"28575\" cap=\"rnd\">\n");
+        xml.push_str(&format!("<a:solidFill><a:schemeClr val=\"{}\">", accent_color));
+        if !modifier.is_empty() {
+            xml.push_str(&format!("<a:{} val=\"{}\"/>", modifier, value));
+        }
+        xml.push_str("</a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:round/></a:ln>\n");
+        xml.push_str("<a:effectLst/>\n");
+        xml.push_str("</c:spPr>\n");
         
         xml.push_str("<c:xVal>\n<c:numRef>\n<c:f>");
         xml.push_str(&format!("'{}'!${}${}:${}${}", 
@@ -1019,8 +1462,14 @@ fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_na
             get_column_letter(col), end_row + 1));
         xml.push_str("</c:f>\n</c:numRef>\n</c:yVal>\n");
         
+        xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+        xml.push_str(&format!("<c16:uniqueId val=\"{{0000000{}-6E8F-43DD-B1F6-30AC1D0140EF}}\"/>", series_idx));
+        xml.push_str("</c:ext></c:extLst>\n");
+        
         xml.push_str("</c:ser>\n");
     }
+    
+    write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
     
     xml.push_str("<c:axId val=\"100000001\"/>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
@@ -1028,12 +1477,19 @@ fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_na
     
     xml.push_str("<c:valAx>\n");
     xml.push_str("<c:axId val=\"100000001\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"b\"/>\n");
-    // ADD TITLE
     if let Some(ref x_title) = chart.x_axis_title {
-        write_axis_title(xml, x_title);
+        write_axis_title(xml, x_title, chart);
     }
     xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
@@ -1045,12 +1501,19 @@ fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_na
     
     xml.push_str("<c:valAx>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"l\"/>\n");
-    // ADD TITLE
     if let Some(ref y_title) = chart.y_axis_title {
-        write_axis_title(xml, y_title);
+        write_axis_title(xml, y_title, chart);
     }
     xml.push_str("<c:majorGridlines/>\n");
     xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
@@ -1061,13 +1524,19 @@ fn generate_scatter_chart_content(xml: &mut String, chart: &ExcelChart, sheet_na
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
     xml.push_str("</c:valAx>\n");
 }
-
+// ============================================================================
+// AREA CHART
+// ============================================================================
 fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name: &str) {
     xml.push_str("<c:areaChart>\n");
-    xml.push_str("<c:grouping val=\"standard\"/>\n");
+    xml.push_str(&format!("<c:grouping val=\"{}\"/>\n", 
+        if chart.percent_stacked { "percentStacked" } else if chart.stacked { "stacked" } else { "standard" }));
+    xml.push_str("<c:varyColors val=\"0\"/>\n");
     
     let (start_row, start_col, end_row, end_col) = chart.data_range;
     let category_col = chart.category_col.unwrap_or(start_col);
+    let accent_colors = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let tint_shade_values = [("tint", "65000"), ("", ""), ("shade", "65000")];
     
     let mut actual_series_idx = 0;
     for col in start_col..=end_col {
@@ -1076,29 +1545,53 @@ fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
         }
         
         let series_name = chart.series_names.get(actual_series_idx).map(|s| s.as_str()).unwrap_or("Series");
+        let accent_color = accent_colors[actual_series_idx % accent_colors.len()];
+        let (modifier, value) = tint_shade_values[actual_series_idx % tint_shade_values.len()];
         
         xml.push_str(&format!("<c:ser>\n<c:idx val=\"{}\"/>\n<c:order val=\"{}\"/>\n", actual_series_idx, actual_series_idx));
         
         xml.push_str("<c:tx>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}$1", sheet_name, get_column_letter(col)));
+        xml.push_str(&format!("{}!${}$1", sheet_name, get_column_letter(col)));
         xml.push_str("</c:f>\n<c:strCache>\n<c:ptCount val=\"1\"/>\n<c:pt idx=\"0\">\n");
         xml.push_str(&format!("<c:v>{}</c:v>\n", series_name));
         xml.push_str("</c:pt>\n</c:strCache>\n</c:strRef>\n</c:tx>\n");
         
+        xml.push_str("<c:spPr>\n");
+        xml.push_str(&format!("<a:solidFill><a:schemeClr val=\"{}\">", accent_color));
+        if !modifier.is_empty() {
+            xml.push_str(&format!("<a:{} val=\"{}\"/>", modifier, value));
+        }
+        xml.push_str("</a:schemeClr></a:solidFill>\n");
+        xml.push_str("<a:ln><a:noFill/></a:ln>\n");
+        xml.push_str("<a:effectLst/>\n");
+        xml.push_str("</c:spPr>\n");
+        
+        if chart.stacked || chart.percent_stacked {
+            write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
+        }
+        
         xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(category_col), start_row + 1, 
             get_column_letter(category_col), end_row + 1));
         xml.push_str("</c:f>\n</c:strRef>\n</c:cat>\n");
         
         xml.push_str("<c:val>\n<c:numRef>\n<c:f>");
-        xml.push_str(&format!("'{}'!${}${}:${}${}", 
+        xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(col), start_row + 1, 
             get_column_letter(col), end_row + 1));
         xml.push_str("</c:f>\n</c:numRef>\n</c:val>\n");
         
+        xml.push_str("<c:extLst><c:ext uri=\"{C3380CC4-5D6E-409C-BE32-E72D297353CC}\" xmlns:c16=\"http://schemas.microsoft.com/office/drawing/2014/chart\">");
+        xml.push_str(&format!("<c16:uniqueId val=\"{{0000000{}-6E8F-43DD-B1F6-30AC1D0140EF}}\"/>", actual_series_idx));
+        xml.push_str("</c:ext></c:extLst>\n");
+        
         xml.push_str("</c:ser>\n");
         actual_series_idx += 1;
+    }
+    
+    if !chart.stacked && !chart.percent_stacked {
+        write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
     }
     
     xml.push_str("<c:axId val=\"100000001\"/>\n");
@@ -1111,43 +1604,49 @@ fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"b\"/>\n");
     if let Some(ref x_title) = chart.x_axis_title {
-        write_axis_title(xml, x_title);
+        write_axis_title(xml, x_title, chart);
     }
-    xml.push_str("<c:majorTickMark val=\"none\"/>\n");
+    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    xml.push_str("<c:majorTickMark val=\"out\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_category_axis_styling(xml);
     xml.push_str("<c:crossAx val=\"100000002\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:auto val=\"1\"/>\n");
+    xml.push_str("<c:lblAlgn val=\"ctr\"/>\n");
+    xml.push_str("<c:lblOffset val=\"100\"/>\n");
+    xml.push_str("<c:noMultiLvlLbl val=\"0\"/>\n");
     xml.push_str("</c:catAx>\n");
     
     xml.push_str("<c:valAx>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
-    xml.push_str("<c:scaling><c:orientation val=\"minMax\"/></c:scaling>\n");
+    xml.push_str("<c:scaling>\n");
+    xml.push_str("<c:orientation val=\"minMax\"/>\n");
+    if let Some(min) = chart.axis_min {
+        xml.push_str(&format!("<c:min val=\"{}\"/>\n", min));
+    }
+    if let Some(max) = chart.axis_max {
+        xml.push_str(&format!("<c:max val=\"{}\"/>\n", max));
+    }
+    xml.push_str("</c:scaling>\n");
     xml.push_str("<c:delete val=\"0\"/>\n");
     xml.push_str("<c:axPos val=\"l\"/>\n");
+    write_major_gridlines(xml);
     if let Some(ref y_title) = chart.y_axis_title {
-        write_axis_title(xml, y_title);
+        write_axis_title(xml, y_title, chart);
     }
-    xml.push_str("<c:majorGridlines/>\n");
-    xml.push_str("<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>\n");
+    let format_code = if chart.percent_stacked { "0%" } else { "General" };
+    xml.push_str(&format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"1\"/>\n", format_code));
     xml.push_str("<c:majorTickMark val=\"none\"/>\n");
     xml.push_str("<c:minorTickMark val=\"none\"/>\n");
     xml.push_str("<c:tickLblPos val=\"nextTo\"/>\n");
+    write_value_axis_styling(xml);
     xml.push_str("<c:crossAx val=\"100000001\"/>\n");
     xml.push_str("<c:crosses val=\"autoZero\"/>\n");
+    xml.push_str("<c:crossBetween val=\"midCat\"/>\n");
     xml.push_str("</c:valAx>\n");
-}
-
-fn get_column_letter(col: usize) -> String {
-    let mut result = String::new();
-    let mut col = col;
-    
-    while col >= 26 {
-        result.push((b'A' + (col % 26) as u8) as char);
-        col = col / 26 - 1;
-    }
-    result.push((b'A' + col as u8) as char);
-    result.chars().rev().collect()
+    xml.push_str("<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>\n");
 }
 
 /// Generate drawing relationships
@@ -2384,7 +2883,6 @@ fn estimate_avg_cell_size(sheet: &SheetData) -> usize {
     (total / (sample_size * sheet.num_cols())).max(25)
 }
 
-// After generate_drawing_rels function, add:
 
 /// Generate drawing XML with both charts and images
 pub fn generate_drawing_xml_combined(charts: &[ExcelChart], images: &[ExcelImage]) -> String {

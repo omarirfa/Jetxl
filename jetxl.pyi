@@ -846,9 +846,9 @@ class ChartPosition(TypedDict):
     to_row: int
 
 class ExcelChart(TypedDict, total=False):
-    """Excel chart definition with customization options.
+    """Excel chart definition with extensive customization options.
     
-    Jetxl supports six chart types:
+    Jetxl supports six chart types with advanced styling:
     - column: Vertical bars for comparing categories
     - bar: Horizontal bars for comparing items
     - line: Trends over time or continuous data
@@ -858,81 +858,272 @@ class ExcelChart(TypedDict, total=False):
     
     Attributes:
         chart_type: Type of chart (required)
-        start_row: First data row including header (required, 1-based)
-        start_col: First data column (required, 0-based)
-        end_row: Last data row (required, 1-based)
-        end_col: Last data column (required, 0-based)
-        from_col: Chart start column (required, 0-based)
-        from_row: Chart start row (required, 0-based)
-        to_col: Chart end column (required, 0-based)
-        to_row: Chart end row (required, 0-based)
-        title: Chart title (optional)
-        category_col: Column for X-axis labels (optional, 0-based)
-        series_names: Custom names for data series (optional)
-        show_legend: Show legend (optional, default: True)
-        legend_position: Literal["right", "left", "top", "bottom", "none"]
-        x_axis_title: X-axis label (optional)
-        y_axis_title: Y-axis label (optional)
+        
+        # Data Range (choose one method):
+        data_range: Tuple (start_row, start_col, end_row, end_col) - alternative to individual params
+        start_row: First data row including header (1-based)
+        start_col: First data column (0-based)
+        end_row: Last data row (1-based)
+        end_col: Last data column (0-based)
+        
+        # Chart Position (required):
+        from_col: Chart start column (0-based)
+        from_row: Chart start row (0-based)
+        to_col: Chart end column (0-based)
+        to_row: Chart end row (0-based)
+        
+        # Basic Configuration:
+        title: Chart title
+        category_col: Column for X-axis labels (0-based)
+        series_names: Custom names for data series
+        show_legend: Show legend (default: True)
+        legend_position: Legend placement
+        x_axis_title: X-axis label
+        y_axis_title: Y-axis label
+        
+        # Chart Type Options:
+        stacked: Stack series (column, bar, line, area)
+        percent_stacked: Stack as 100% (column, bar, line, area)
+        show_data_labels: Display values on chart elements
+        chart_style: Excel chart style number (1-48)
+        
+        # Axis Scaling:
+        axis_min: Minimum Y-axis value
+        axis_max: Maximum Y-axis value
+        
+        # Title Styling:
+        title_bold: Bold title text
+        title_font_size: Title font size (hundredths of point, e.g., 1800 = 18pt)
+        title_color: Title color (ARGB hex without alpha, e.g., "FF0000" for red)
+        
+        # Axis Title Styling:
+        axis_title_bold: Bold axis titles
+        axis_title_font_size: Axis title font size (hundredths of point)
+        axis_title_color: Axis title color (ARGB hex without alpha)
+        
+        # Legend Styling:
+        legend_bold: Bold legend text
+        legend_font_size: Legend font size (hundredths of point)
     
-    Example - Column Chart:
+    Example - Basic Column Chart:
         >>> chart = {
         ...     "chart_type": "column",
         ...     "start_row": 1, "start_col": 0,
         ...     "end_row": 12, "end_col": 3,
         ...     "from_col": 5, "from_row": 1,
         ...     "to_col": 13, "to_row": 16,
-        ...     "title": "Monthly Sales by Region",
+        ...     "title": "Monthly Sales",
         ...     "category_col": 0,
-        ...     "series_names": ["North", "South", "West"],
         ...     "x_axis_title": "Month",
-        ...     "y_axis_title": "Sales ($)",
-        ...     "show_legend": True,
-        ...     "legend_position": "right"
+        ...     "y_axis_title": "Sales ($)"
         ... }
     
-    Example - Pie Chart:
-        >>> pie = {
-        ...     "chart_type": "pie",
-        ...     "start_row": 1, "start_col": 0,
-        ...     "end_row": 5, "end_col": 1,
-        ...     "from_col": 3, "from_row": 1,
-        ...     "to_col": 10, "to_row": 15,
-        ...     "title": "Market Share by Product",
+    Example - Stacked Column Chart with Styling:
+        >>> chart = {
+        ...     "chart_type": "column",
+        ...     "data_range": (0, 0, 3, 3),  # Alternative to start_row/start_col
+        ...     "from_col": 5, "from_row": 0,
+        ...     "to_col": 15, "to_row": 20,
+        ...     "title": "Revenue Components",
+        ...     "title_bold": True,
+        ...     "title_font_size": 1800,
+        ...     "title_color": "0070C0",
+        ...     "stacked": True,
+        ...     "show_data_labels": True,
         ...     "category_col": 0,
-        ...     "show_legend": True
-        ... }
-    
-    Example - Line Chart with Trends:
-        >>> line = {
-        ...     "chart_type": "line",
-        ...     "start_row": 1, "start_col": 0,
-        ...     "end_row": 24, "end_col": 4,
-        ...     "from_col": 6, "from_row": 1,
-        ...     "to_col": 14, "to_row": 20,
-        ...     "title": "Quarterly Trends",
-        ...     "category_col": 0,
-        ...     "series_names": ["Revenue", "Costs", "Profit"],
+        ...     "series_names": ["Revenue", "Profit", "Expenses"],
         ...     "x_axis_title": "Quarter",
         ...     "y_axis_title": "Amount ($)",
-        ...     "show_legend": True
+        ...     "chart_style": 104
         ... }
+    
+    Example - Percent Stacked Area Chart:
+        >>> chart = {
+        ...     "chart_type": "area",
+        ...     "data_range": (0, 0, 3, 3),
+        ...     "from_col": 5, "from_row": 0,
+        ...     "to_col": 15, "to_row": 20,
+        ...     "title": "Market Share Over Time",
+        ...     "percent_stacked": True,
+        ...     "axis_min": 0.0,
+        ...     "axis_max": 1.0,
+        ...     "category_col": 0,
+        ...     "show_data_labels": True,
+        ...     "x_axis_title": "Year",
+        ...     "y_axis_title": "Percentage"
+        ... }
+    
+    Example - Styled Bar Chart with Axis Control:
+        >>> chart = {
+        ...     "chart_type": "bar",
+        ...     "start_row": 1, "start_col": 0,
+        ...     "end_row": 5, "end_col": 2,
+        ...     "from_col": 5, "from_row": 0,
+        ...     "to_col": 15, "to_row": 20,
+        ...     "title": "Sales Performance",
+        ...     "title_bold": True,
+        ...     "title_font_size": 1600,
+        ...     "title_color": "FF0000",
+        ...     "axis_min": 0.0,
+        ...     "axis_max": 10000.0,
+        ...     "axis_title_bold": True,
+        ...     "axis_title_font_size": 1200,
+        ...     "axis_title_color": "00B050",
+        ...     "legend_bold": True,
+        ...     "legend_font_size": 1000,
+        ...     "show_data_labels": True,
+        ...     "chart_style": 26
+        ... }
+    
+    Font Size Guide:
+        Font sizes use Excel's internal unit system based on the Office Open XML (OOXML) standard.
+        Values are in HUNDREDTHS OF A POINT (1 point = 100 units).
+        
+        Formula: excel_points = font_size_value / 100
+        
+        Common conversions:
+        Title Sizes:
+        - 800 = 8pt   (Small title)
+        - 1000 = 10pt (Compact title)
+        - 1200 = 12pt (Standard title)
+        - 1400 = 14pt (Medium title)
+        - 1600 = 16pt (Large title)
+        - 1800 = 18pt (Extra large title)
+        - 2400 = 24pt (Presentation title)
+        - 3200 = 32pt (Header/banner)
+        
+        Axis Title Sizes:
+        - 900 = 9pt   (Small)
+        - 1000 = 10pt (Standard)
+        - 1100 = 11pt (Medium)
+        - 1200 = 12pt (Large)
+        
+        Legend Sizes:
+        - 800 = 8pt   (Compact)
+        - 900 = 9pt   (Small)
+        - 1000 = 10pt (Standard)
+        - 1100 = 11pt (Medium)
+        
+        Why hundredths of a point?
+        - Precise control over text sizing
+        - Matches Excel's internal OOXML format
+        - Allows fractional sizes (e.g., 1050 = 10.5pt)
+        - Same system used throughout Microsoft Office
+    
+    Chart Style Numbers:
+        Excel provides 48 pre-defined chart styles that apply coordinated colors,
+        effects, and formatting. Each chart type interprets these styles differently.
+        
+        Style Categories (1-48):
+        - 1-10: Colorful variations with different color schemes
+        - 11-16: Monochrome styles (black, white, gray)
+        - 17-32: Colorful outlined styles with borders
+        - 33-40: Soft color palettes
+        - 41-48: Modern gradient and flat design styles
+        
+        Popular Styles by Use Case:
+        Professional/Corporate:
+        - 2: Blue colorful
+        - 11: Monochrome gray
+        - 26: Dark professional
+        
+        Modern/Vibrant:
+        - 42: Gradient modern
+        - 102: Contemporary (if available)
+        - 104: Bright modern
+        
+        Print-Friendly:
+        - 11: Black and white
+        - 15: High contrast
+        
+        How to Find Your Preferred Style:
+        1. Create a chart in Excel manually
+        2. Click the chart → Chart Design → Chart Styles
+        3. Preview different styles in the gallery
+        4. Note the style number (gallery order)
+        5. Use that number in Jetxl's chart_style parameter
+        
+        Reference:
+        https://support.microsoft.com/en-us/office/available-chart-types-in-office-a6187218-807e-4103-9e0a-27cdb19afb90
+    
+    Axis Scaling Guide:
+        Control the Y-axis range to focus on relevant data ranges or maintain
+        consistent scales across charts.
+        
+        When to Use Axis Scaling:
+        
+        1. Percentage Data (0-100%):
+           axis_min=0.0, axis_max=100.0
+        
+        2. Normalized Data (0-1) for percent_stacked:
+           axis_min=0.0, axis_max=1.0
+        
+        3. Focus on Variance (zoom in):
+           Data ranges 85-95, use axis_min=80.0, axis_max=100.0
+        
+        4. Compare Multiple Charts:
+           Use same scale across all charts for fair comparison
+        
+        5. Symmetric Ranges (profit/loss):
+           axis_min=-10000.0, axis_max=10000.0
+        
+        Best Practices:
+        - Always start at 0.0 for bar/column charts (avoid misleading visuals)
+        - Use axis_min > 0 only for line charts showing trends
+        - For percent_stacked, always use axis_min=0.0, axis_max=1.0
+        - Omit axis_min/axis_max to let Excel auto-scale
+        - Use consistent scales when comparing multiple charts
     """
+    # Required
     chart_type: Literal["column", "bar", "line", "pie", "scatter", "area"]
-    start_row: int                      # Required: 1-based
-    start_col: int                      # Required: 0-based
-    end_row: int                        # Required: 1-based
-    end_col: int                        # Required: 0-based
-    from_col: int                       # Required: chart position
-    from_row: int                       # Required: chart position
-    to_col: int                         # Required: chart position
-    to_row: int                         # Required: chart position
-    title: str                          # Optional: chart title
-    category_col: int                   # Optional: 0-based column for categories
-    series_names: List[str]             # Optional: custom series names
-    show_legend: bool                   # Optional: show legend
+    
+    # Data Range - Option 1: Tuple format
+    data_range: Tuple[int, int, int, int]  # (start_row, start_col, end_row, end_col)
+    
+    # Data Range - Option 2: Individual parameters
+    start_row: int                      # 1-based
+    start_col: int                      # 0-based
+    end_row: int                        # 1-based
+    end_col: int                        # 0-based
+    
+    # Chart Position (required)
+    from_col: int                       # Chart position
+    from_row: int                       # Chart position
+    to_col: int                         # Chart position
+    to_row: int                         # Chart position
+    
+    # Basic Configuration
+    title: str                          # Chart title
+    category_col: int                   # 0-based column for categories
+    series_names: List[str]             # Custom series names
+    show_legend: bool                   # Show legend
     legend_position: Literal["right", "left", "top", "bottom", "none"]
-    x_axis_title: str                   # Optional: X-axis label
-    y_axis_title: str                   # Optional: Y-axis label
+    x_axis_title: str                   # X-axis label
+    y_axis_title: str                   # Y-axis label
+    
+    # Chart Type Options
+    stacked: bool                       # Stack series (column, bar, line, area)
+    percent_stacked: bool               # Stack as 100% (column, bar, line, area)
+    show_data_labels: bool              # Display values on chart elements
+    chart_style: int                    # Excel chart style (1-48)
+    
+    # Axis Scaling
+    axis_min: float                     # Minimum Y-axis value
+    axis_max: float                     # Maximum Y-axis value
+    
+    # Title Styling
+    title_bold: bool                    # Bold title text
+    title_font_size: int                # Title font size (hundredths of point)
+    title_color: str                    # Title color (ARGB hex without alpha)
+    
+    # Axis Title Styling
+    axis_title_bold: bool               # Bold axis titles
+    axis_title_font_size: int           # Axis title font size (hundredths of point)
+    axis_title_color: str               # Axis title color (ARGB hex without alpha)
+    
+    # Legend Styling
+    legend_bold: bool                   # Bold legend text
+    legend_font_size: int               # Legend font size (hundredths of point)
 
 # =============================================================================
 # EXCEL IMAGES
