@@ -760,7 +760,9 @@ pub fn generate_chart_xml(chart: &ExcelChart, sheet_name: &str) -> String {
     }
     
     xml.push_str("<c:plotVisOnly val=\"1\"/>\n");
-    xml.push_str("<c:dispBlanksAs val=\"gap\"/>\n");
+    // Area charts use "zero" for dispBlanksAs, other charts use "gap"
+    let disp_blanks = if matches!(chart.chart_type, ChartType::Area) { "zero" } else { "gap" };
+    xml.push_str(&format!("<c:dispBlanksAs val=\"{}\"/>\n", disp_blanks));
     xml.push_str("<c:showDLblsOverMax val=\"0\"/>\n");
     xml.push_str("</c:chart>\n");
     
@@ -1566,10 +1568,6 @@ fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
         xml.push_str("<a:effectLst/>\n");
         xml.push_str("</c:spPr>\n");
         
-        if chart.stacked || chart.percent_stacked {
-            write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
-        }
-        
         xml.push_str("<c:cat>\n<c:strRef>\n<c:f>");
         xml.push_str(&format!("{}!${}${}:${}${}", 
             sheet_name, get_column_letter(category_col), start_row + 1, 
@@ -1590,9 +1588,8 @@ fn generate_area_chart_content(xml: &mut String, chart: &ExcelChart, sheet_name:
         actual_series_idx += 1;
     }
     
-    if !chart.stacked && !chart.percent_stacked {
-        write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
-    }
+    // Area charts always have dLbls after all series
+    write_data_labels(xml, chart.show_data_labels.unwrap_or(false));
     
     xml.push_str("<c:axId val=\"100000001\"/>\n");
     xml.push_str("<c:axId val=\"100000002\"/>\n");
@@ -2988,13 +2985,15 @@ pub fn generate_drawing_xml_combined(charts: &[ExcelChart], images: &[ExcelImage
 }
 
 /// Generate drawing relationships for both charts and images
-pub fn generate_drawing_rels_combined(num_charts: usize, images: &[ExcelImage]) -> String {
+pub fn generate_drawing_rels_combined(num_charts: usize, images: &[ExcelImage], start_chart_id: usize) -> String {
     let mut xml = String::with_capacity(300 + (num_charts + images.len()) * 150);
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
     xml.push_str("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n");
     
-    for i in 1..=num_charts {
-        xml.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", i, i));
+    for i in 0..num_charts {
+        let local_id = i + 1;
+        let global_chart_id = start_chart_id + i;
+        xml.push_str(&format!("<Relationship Id=\"rIdChart{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{}.xml\"/>\n", local_id, global_chart_id));
     }
     
     for (idx, image) in images.iter().enumerate() {
