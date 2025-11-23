@@ -16,6 +16,7 @@ triage_output_file.xlsx
 __pycache__/
 *.py[cod]
 *$py.class
+Cargo.lock
 
 # C extensions
 Customer_LLP.xlsx

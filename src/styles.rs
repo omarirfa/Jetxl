@@ -860,6 +860,20 @@ pub struct ExcelChart {
     pub legend_position: LegendPosition,
     pub x_axis_title: Option<String>,
     pub y_axis_title: Option<String>, 
+    pub stacked: bool,
+    pub percent_stacked: bool,
+    pub show_data_labels: Option<bool>, // Show values on data points
+    pub chart_style: Option<u32>,
+    pub axis_min: Option<f64>,
+    pub axis_max: Option<f64>,
+    pub title_bold: bool,
+    pub title_font_size: Option<u32>,
+    pub title_color: Option<String>,
+    pub axis_title_bold: bool,
+    pub axis_title_font_size: Option<u32>,
+    pub axis_title_color: Option<String>,
+    pub legend_bold: bool,
+    pub legend_font_size: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -951,7 +965,21 @@ impl ExcelChart {
             show_legend: true,
             legend_position: LegendPosition::Right,
             x_axis_title: None,
-            y_axis_title: None,  
+            y_axis_title: None,
+            stacked: false,  
+            percent_stacked: false,
+            show_data_labels: None,
+            chart_style: None,
+            axis_min: None,
+            axis_max: None,
+            title_bold: false,
+            title_font_size: None,
+            title_color: None,
+            axis_title_bold: false,
+            axis_title_font_size: None,
+            axis_title_color: None,
+            legend_bold: false,
+            legend_font_size: None,
         }
     }
 }

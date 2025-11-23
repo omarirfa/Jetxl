@@ -62,7 +62,7 @@ pub fn write_single_sheet_with_config(
             .compression_level(CompressionLevel::fast())
             .done();
         
-        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images, 1);
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
@@ -325,7 +325,7 @@ pub fn write_single_sheet_arrow_with_config(
             .compression_level(CompressionLevel::fast())
             .done();
         
-        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images, 1);
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
@@ -444,7 +444,7 @@ pub fn write_single_sheet_arrow_to_bytes(
             .compression_level(CompressionLevel::fast())
             .done();
         
-        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images);
+        let drawing_rels = generate_drawing_rels_combined(config.charts.len(), &config.images, 1);
         zipper
             .add_file_from_memory(drawing_rels.into_bytes(), "xl/drawings/_rels/drawing1.xml.rels".to_string())
             .compression_level(CompressionLevel::fast())
@@ -707,7 +707,7 @@ pub fn write_multiple_sheets_arrow_to_bytes(
                 .compression_level(CompressionLevel::fast())
                 .done();
             
-            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images);
+            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images, global_chart_id);
             
             zipper
                 .add_file_from_memory(drawing_rels.into_bytes(), format!("xl/drawings/_rels/drawing{}.xml.rels", drawing_id))
@@ -991,7 +991,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
                 .compression_level(CompressionLevel::fast())
                 .done();
             
-            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images);
+            let drawing_rels = generate_drawing_rels_combined(sheet_config.charts.len(), &sheet_config.images, global_chart_id);
             
             zipper
                 .add_file_from_memory(drawing_rels.into_bytes(), format!("xl/drawings/_rels/drawing{}.xml.rels", drawing_id))

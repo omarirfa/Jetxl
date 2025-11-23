@@ -1325,10 +1325,16 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
         _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid chart type")),
     };
     
-    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
-    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+    // Handle both old API (start_row/start_col) and new API (data_range tuple)
+    let data_range = if let Some(range) = dict.get_item("data_range")? {
+        range.extract::<(usize, usize, usize, usize)>()?
+    } else {
+        let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
+        let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+        let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
+        let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
+        (start_row, start_col, end_row, end_col)
+    };
     
     let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
     let from_row: usize = dict.get_item("from_row")?.unwrap().extract()?;
@@ -1337,21 +1343,46 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
     
     let mut chart = ExcelChart::new(
         chart_type,
-        (start_row, start_col, end_row, end_col),
+        data_range,
         ChartPosition { from_col, from_row, to_col, to_row },
     );
     
+    // Basic chart properties
     chart.title = dict.get_item("title")?.and_then(|v| v.extract().ok());
     chart.category_col = dict.get_item("category_col")?.and_then(|v| v.extract().ok());
     chart.show_legend = dict.get_item("show_legend")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
     chart.x_axis_title = dict.get_item("x_axis_title")?.and_then(|v| v.extract().ok());
-    chart.y_axis_title = dict.get_item("y_axis_title")?.and_then(|v| v.extract().ok()); 
+    chart.y_axis_title = dict.get_item("y_axis_title")?.and_then(|v| v.extract().ok());
+    chart.stacked = dict.get_item("stacked")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    chart.show_data_labels = dict.get_item("show_data_labels")?.and_then(|v| v.extract().ok());
+    
+    // New properties
+    chart.percent_stacked = dict.get_item("percent_stacked")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    chart.chart_style = dict.get_item("chart_style")?.and_then(|v| v.extract().ok());
+    chart.axis_min = dict.get_item("axis_min")?.and_then(|v| v.extract().ok());
+    chart.axis_max = dict.get_item("axis_max")?.and_then(|v| v.extract().ok());
+    
+    // Title formatting
+    chart.title_bold = dict.get_item("title_bold")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    chart.title_font_size = dict.get_item("title_font_size")?.and_then(|v| v.extract().ok());
+    chart.title_color = dict.get_item("title_color")?.and_then(|v| v.extract().ok());
+    
+    // Axis title formatting
+    chart.axis_title_bold = dict.get_item("axis_title_bold")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    chart.axis_title_font_size = dict.get_item("axis_title_font_size")?.and_then(|v| v.extract().ok());
+    chart.axis_title_color = dict.get_item("axis_title_color")?.and_then(|v| v.extract().ok());
+    
+    // Legend formatting
+    chart.legend_bold = dict.get_item("legend_bold")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
+    chart.legend_font_size = dict.get_item("legend_font_size")?.and_then(|v| v.extract().ok());
+    
     if let Some(names) = dict.get_item("series_names")?.and_then(|v| v.extract::<Vec<String>>().ok()) {
         chart.series_names = names;
     }
     
     Ok(chart)
 }
+
 
 fn extract_image(dict: &Bound<PyDict>) -> PyResult<ExcelImage> {
     let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
