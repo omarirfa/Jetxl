@@ -5,13 +5,65 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 
 ## ✨ Features
 
-- 🚀 **Ultra-fast**: 10-100x faster than traditional Python Excel libraries
+- 🚀 **Ultra-fast**: 5-40x faster than other Python Excel libraries
 - 🔄 **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
 - 🎨 **Rich formatting**: Fonts, colors, borders, alignment, number formats
 - 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts, images
 - 🧵 **Multi-threaded**: Parallel sheet generation for multi-sheet workbooks
 - 💾 **Memory efficient**: Streaming XML generation with minimal memory overhead
 - 🐻‍❄️🐼 **Framework agnostic**: Works seamlessly with Polars, Pandas, PyArrow, and native Python dicts
+
+
+
+## ⚡ Performance Comparison
+
+*Benchmark environment: Python 3.13, AMD Ryzen 9 7900x, 64 GB RAM*
+
+At the time of the test, the following library versions were used:
+- Jetxl: 0.1.0
+- Polars: 1.37.0
+- Pandas: 2.3.3
+- Pyexcelerate: 0.13.0
+- Rustpy-xlsxwriter: 0.7.0
+- Openpyxl: 3.1.5
+- Xlsxwriter: 3.2.9
+
+
+### Library comparison summary
+| Library | 1M Rows | Speedup | Throughput | Memory |
+|---------|---------|---------|------------|--------|
+| **jetxl (arrow)** | **2.06s** | **1.0x** | **526K rows/s** | **~0 MB** |
+| jetxl (dict) | 3.57s | 1.7x slower | 286K rows/s | ~0 MB |
+| xlsxwriter | 10.05s | 4.9x slower | 96K rows/s | 0.4 MB |
+| rustpy_xlsxwriter | 11.27s | 5.5x slower | 89K rows/s | - |
+| pyexcelerate | 35.55s | 17x slower | 28K rows/s | - |
+| polars.write_excel | 40.85s | **20x slower** | 27K rows/s | 2.1 GB |
+| openpyxl | 56.25s | **27x slower** | 18K rows/s | 0.4 MB |
+| pandas+xlsxwriter | 56.30s | 27x slower | 18K rows/s | - |
+| pandas+openpyxl | 83.42s | **40x slower** | 12K rows/s | - |
+
+
+
+The chart below shows the execution time comparison with popular libraries for a single sheet file against Jetxl. Performance will vary on different hardware.
+![exec_time_comparison](benchmark\execution_time.png)
+
+
+### Execution Time (seconds)
+
+| Library | 10K rows | 100K rows | 1M rows |
+|---------|----------|-----------|---------|
+| **jetxl (arrow)** | **0.022** | **0.19** | **2.06** |
+| jetxl (dict) | 0.032 | 0.31 | 3.57 |
+| rustpy_xlsxwriter | 0.107 | 1.06 | 11.27 |
+| xlsxwriter | 0.112 | 1.00 | 10.05 |
+| pyexcelerate | 0.333 | 3.86 | 35.55 |
+| polars.write_excel | 0.349 | 3.53 | 40.85 |
+| openpyxl | 0.516 | 5.10 | 56.25 |
+| pandas+xlsxwriter | 0.523 | 5.59 | 56.30 |
+| pandas+openpyxl | 0.756 | 8.33 | 83.42 |
+
+
+
 
 ## 📦 Installation
 
@@ -23,6 +75,14 @@ pip install jetxl
 ```
 
 ## 🚀 Quick Start
+
+
+> [!IMPORTANT]
+> Jetxl is an **experimental xlsx writer**. There are still
+> bugs or functionality that is being worked on. Existing 
+> functionality is subject to change.
+
+
 
 ### Using Polars (Recommended)
 
@@ -2800,27 +2860,7 @@ jet.write_sheet_arrow(
 )
 ```
 
-## ⚡ Performance Comparison
 
-### Single Sheet Write (1M rows × 10 columns)
-
-| Library | Time | Memory | Speed vs Jetxl |
-|---------|------|--------|----------------|
-| **Jetxl** | **[TBD]** | **[TBD]** | **1.0x** |
-| openpyxl | [TBD] | [TBD] | [TBD]x slower |
-| xlsxwriter | [TBD] | [TBD] | [TBD]x slower |
-| pandas.to_excel | [TBD] | [TBD] | [TBD]x slower |
-
-### Multi-Sheet Write (5 sheets, 100K rows each)
-
-| Library | Time | Threads | Speed vs Jetxl |
-|---------|------|---------|----------------|
-| **Jetxl (4 threads)** | **[TBD]** | 4 | **1.0x** |
-| Jetxl (1 thread) | [TBD] | 1 | [TBD]x slower |
-| openpyxl | [TBD] | 1 | [TBD]x slower |
-| xlsxwriter | [TBD] | 1 | [TBD]x slower |
-
-*Benchmark environment: [System specs to be added]*
 
 ## 🗃️ Architecture
 
@@ -2884,29 +2924,42 @@ except ValueError as e:
 
 ## 🤝 Comparison with Other Libraries
 
-### vs openpyxl
-
-- ✅ 50-100x faster for large datasets
-- ✅ Lower memory usage
-- ✅ Native Arrow/Polars support
-- ❌ Write-only (openpyxl supports reading)
-- ❌ Fewer chart/drawing features
-
 ### vs xlsxwriter
-
-- ✅ 10-50x faster
-- ✅ Multi-threaded sheet generation
+- ✅ **5x faster** (1M rows: 2.06s vs 10.05s)
+- ✅ Near-zero Python memory overhead
 - ✅ Zero-copy DataFrame integration
-- ✅ Modern Python API (type hints, etc.)
+- ✅ Multi-threaded sheet generation
+- ✅ Modern Python API with type hints
+- ❌ Larger output files (less aggressive compression)
 - ❌ Fewer advanced chart customizations
 
-### vs pandas.to_excel
+### vs openpyxl
+- ✅ **27x faster** (1M rows: 2.06s vs 56.25s)
+- ✅ Dramatically lower memory usage
+- ✅ Native Arrow/Polars/Pandas support
+- ❌ Write-only (openpyxl supports reading)
+- ❌ Fewer cell-level features
 
-- ✅ 20-100x faster
-- ✅ Direct Polars support
-- ✅ More formatting options
+### vs polars.write_excel
+- ✅ **20x faster** (1M rows: 2.06s vs 40.85s)
+- ✅ **2000x lower memory** (~0 MB vs 2.1 GB at 1M rows)
+- ✅ More formatting options (conditional formatting, tables, charts)
+- ✅ Multi-sheet threading support
+- ❌ Requires `.to_arrow()` conversion
+
+### vs pandas.to_excel
+- ✅ **27-40x faster** depending on engine
+- ✅ Direct Polars support (no pandas dependency)
+- ✅ Richer formatting options
 - ✅ Multi-threading support
-- ✅ Lower memory footprint
+- ✅ Dramatically lower memory footprint
+
+### vs rustpy_xlsxwriter
+- ✅ **5.5x faster** (1M rows: 2.06s vs 11.27s)
+- ✅ Native Arrow support (no data conversion needed)
+- ✅ More formatting options
+- ✅ Multi-threaded sheet generation
+
 
 ## 📋 Supported Data Types
 
