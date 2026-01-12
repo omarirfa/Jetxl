@@ -45,7 +45,7 @@ At the time of the test, the following library versions were used:
 
 
 The chart below shows the execution time comparison with popular libraries for a single sheet file against Jetxl. Performance will vary on different hardware.
-![exec_time_comparison](benchmark\execution_time.png)
+![exec_time_comparison](benchmark/execution_time.png)
 
 
 ### Execution Time (seconds)
