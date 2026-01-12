@@ -78,8 +78,8 @@ pip install jetxl
 
 
 > [!IMPORTANT]
-> Jetxl is an **experimental xlsx writer**. There are still
-> bugs or functionality that is being worked on. Existing 
+> Jetxl is an **experimental xlsx writer** in its current state. There are still
+> bugs and breaking changes that can happen. Existing 
 > functionality is subject to change.
 
 
