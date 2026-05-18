@@ -21,10 +21,10 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 
 At the time of the test, the following library versions were used:
 - Jetxl: 0.2.0
-- Polars: 1.37.0
-- Pandas: 2.3.3
+- Polars: 1.40.1
+- Pandas: 3.0.3
 - Pyexcelerate: 0.13.0
-- Rustpy-xlsxwriter: 0.7.0
+- Rustpy-xlsxwriter: 0.4.4
 - Openpyxl: 3.1.5
 - Xlsxwriter: 3.2.9
 
