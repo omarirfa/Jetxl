@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.3-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.2-alpha...v0.2.3-alpha) (2026-05-18)
+
+
+### Bug Fixes
+
+* refactor github actions ([5c35a1e](https://github.com/omarirfa/Jetxl/commit/5c35a1efe90533335c717ca09212bca2f7ff253e))
+* refactor github actions ([ec80215](https://github.com/omarirfa/Jetxl/commit/ec8021558c70fc5b17004be049017b29bb7daf35))
+
 ## [0.2.2-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.1-alpha...v0.2.2-alpha) (2026-05-18)
 
 
