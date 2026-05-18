@@ -12,12 +12,12 @@ name = "jetxl"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26", features = ["extension-module", "abi3-py38"] }
-pyo3-arrow = "0.12"
-arrow = "56.2"
-arrow-array = "56.2"
-arrow-schema = "56.2"
-arrow-data = "56.2"
+pyo3 = { version = "0.28", features = ["chrono", "chrono-tz","extension-module"] }
+pyo3-arrow = "0.17"
+arrow = "58"
+arrow-array = "58"
+arrow-schema = "58"
+arrow-data = "58"
 mtzip = { version = "4.0.3", features = ["rayon"] }
 chrono = "0.4"
 zmij = "1.0"
