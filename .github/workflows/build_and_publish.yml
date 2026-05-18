@@ -8,7 +8,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
   # ---------------------------------------------------------------------------
-  # Linux
+  # Linux build
   # ---------------------------------------------------------------------------
   linux:
     name: Build Linux wheels
@@ -29,7 +29,7 @@ jobs:
           path: dist
 
   # ---------------------------------------------------------------------------
-  # Windows + macOS: one job per (os, python) pair.
+  # Windows + macOS: one runner per architecture, split by Python version
   # ---------------------------------------------------------------------------
   wheels:
     name: Build ${{ matrix.os }} / py${{ matrix.python }}
@@ -38,23 +38,17 @@ jobs:
       fail-fast: true
       matrix:
         os:
-          - windows-2025-vs2026
-          - macos-15-intel       # macOS 15 x64
-          - macos-26-intel       # macOS 26 x64
-          - macos-14             # macOS 14 arm64
-          - macos-26             # macOS 26 arm64
+          - windows-2025-vs2026  # x86_64
+          - macos-15             # arm64
+          - macos-26-intel       # x86_64
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: windows-2025-vs2026
             target: x86_64
-          - os: macos-15-intel
-            target: x86_64
+          - os: macos-15
+            target: aarch64
           - os: macos-26-intel
             target: x86_64
-          - os: macos-14
-            target: aarch64
-          - os: macos-26
-            target: aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -105,9 +99,9 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: 'wheels-*/*'
+          subject-path: "wheels-*/*"
       - name: Show downloaded files
-        run: find . -name '*.whl' -o -name '*.tar.gz' | sort
+        run: find . -name "*.whl" -o -name "*.tar.gz" | sort
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Publish to PyPI
