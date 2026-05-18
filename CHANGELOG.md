@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.5-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.4-alpha...v0.2.5-alpha) (2026-05-18)
+
+
+### Bug Fixes
+
+* add missing metadata to pyproject.toml ([5be3191](https://github.com/omarirfa/Jetxl/commit/5be3191281a4d2dde39dd4e1bf04bb908e0acf30))
+* add missing metadata to pyproject.toml ([043aa76](https://github.com/omarirfa/Jetxl/commit/043aa76ccf0005de3df1e4b36903fa04e9457d1a))
+
 ## [0.2.4-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.3-alpha...v0.2.4-alpha) (2026-05-18)
 
 
