@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.1-alpha...v0.2.2-alpha) (2026-05-18)
+
+
+### Bug Fixes
+
+* optimizing build_and_publish file ([b084f66](https://github.com/omarirfa/Jetxl/commit/b084f660062447a89fcec66a98bca8d965896b97))
+* optimizing build_and_publish file ([2233ddd](https://github.com/omarirfa/Jetxl/commit/2233ddd7fd43706f8989cb10dd6e9d61fcf4d419))
+
 ## [0.2.1-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.0-alpha...v0.2.1-alpha) (2026-05-18)
 
 
