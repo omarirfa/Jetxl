@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.0-alpha...v0.2.1-alpha) (2026-05-18)
+
+
+### Bug Fixes
+
+* fixed build pipeline and updated calls ([c954080](https://github.com/omarirfa/Jetxl/commit/c9540800510fbedafd9c370c6e9752a37dba13af))
+* fixed build pipeline and updated calls ([804f21b](https://github.com/omarirfa/Jetxl/commit/804f21bca04ad25112fe06533619648d567074ba))
+
 ## [0.2.0-alpha](https://github.com/omarirfa/Jetxl/compare/v0.1.0-alpha...v0.2.0-alpha) (2026-05-18)
 
 
