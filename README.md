@@ -32,15 +32,16 @@ At the time of the test, the following library versions were used:
 ### Library comparison summary
 | Library | 1M Rows | Speedup | Throughput | Memory |
 |---------|---------|---------|------------|--------|
-| **jetxl (arrow)** | **2.06s** | **1.0x** | **526K rows/s** | **~0 MB** |
-| jetxl (dict) | 3.57s | 1.7x slower | 286K rows/s | ~0 MB |
-| xlsxwriter | 10.05s | 4.9x slower | 96K rows/s | 0.4 MB |
-| rustpy_xlsxwriter | 11.27s | 5.5x slower | 89K rows/s | - |
-| pyexcelerate | 35.55s | 17x slower | 28K rows/s | - |
-| polars.write_excel | 40.85s | **20x slower** | 27K rows/s | 2.1 GB |
-| openpyxl | 56.25s | **27x slower** | 18K rows/s | 0.4 MB |
-| pandas+xlsxwriter | 56.30s | 27x slower | 18K rows/s | - |
-| pandas+openpyxl | 83.42s | **40x slower** | 12K rows/s | - |
+| **jetxl (arrow)** | **1.85s** | **1.0x** | **523K rows/s** | **~0 MB** |
+| jetxl (dict) | 3.02s | 1.6x slower | 322K rows/s | ~0 MB |
+| rustpy_xlsxwriter | 7.51s | 4.0x slower | 125K rows/s | 267.5 MB |
+| xlsxwriter | 29.16s | **15x slower** | 31K rows/s | 947.6 MB |
+| polars.write_excel | 35.73s | **19x slower** | 26K rows/s | 2.1 GB |
+| pyexcelerate | 36.84s | **19x slower** | 26K rows/s | 1.0 GB |
+| pandas+xlsxwriter | 58.36s | **31x slower** | 16K rows/s | 1.1 GB |
+| openpyxl | 62.80s | **33x slower** | 15K rows/s | 2.4 GB |
+| pandas+openpyxl | 88.10s | **47x slower** | 11K rows/s | 3.1 GB |
+
 
 
 
@@ -52,15 +53,15 @@ The chart below shows the execution time comparison with popular libraries for a
 
 | Library | 10K rows | 100K rows | 1M rows |
 |---------|----------|-----------|---------|
-| **jetxl (arrow)** | **0.022** | **0.19** | **2.06** |
-| jetxl (dict) | 0.032 | 0.31 | 3.57 |
-| rustpy_xlsxwriter | 0.107 | 1.06 | 11.27 |
-| xlsxwriter | 0.112 | 1.00 | 10.05 |
-| pyexcelerate | 0.333 | 3.86 | 35.55 |
-| polars.write_excel | 0.349 | 3.53 | 40.85 |
-| openpyxl | 0.516 | 5.10 | 56.25 |
-| pandas+xlsxwriter | 0.523 | 5.59 | 56.30 |
-| pandas+openpyxl | 0.756 | 8.33 | 83.42 |
+| **jetxl (arrow)** | **0.022** | **0.19** | **1.85** |
+| jetxl (dict) | 0.033 | 0.30 | 3.02 |
+| rustpy_xlsxwriter | 0.071 | 0.73 | 7.51 |
+| xlsxwriter | 0.28 | 2.91 | 29.16 |
+| polars.write_excel | 0.36 | 3.52 | 35.73 |
+| pyexcelerate | 0.34 | 3.40 | 36.84 |
+| pandas+xlsxwriter | 0.54 | 5.50 | 58.36 |
+| openpyxl | 0.58 | 6.09 | 62.80 |
+| pandas+openpyxl | 0.81 | 8.44 | 88.10 |
 
 
 
