@@ -67,7 +67,7 @@ fn write_sheets(
             let cols_item = sheet_dict
                 .get_item("columns")?
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'columns' key"))?;
-            let cols = cols_item.downcast::<PyDict>()?;
+            let cols = cols_item.cast::<PyDict>()?;
 
             extract_sheet_data(py, cols, Some(name))
         })
@@ -189,7 +189,7 @@ fn write_sheet_arrow(
     header_content: Option<Vec<(usize, usize, String)>>
 ) -> PyResult<()> {
     // Convert PyArrow data to RecordBatch
-    let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
+    let any_batch: AnyRecordBatch = arrow_data.extract()?;
     let reader = any_batch.into_reader()?;
     
     let batches: Vec<RecordBatch> = reader
@@ -362,7 +362,7 @@ fn write_sheets_arrow(
         let name: String = sheet_dict.get_item("name")?.ok_or_else(|| 
             PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'name' key"))?.extract()?;
         
-        let any_batch = AnyRecordBatch::extract_bound(&arrow_data)?;
+        let any_batch: AnyRecordBatch = arrow_data.extract()?;
         let reader = any_batch.into_reader()?;
         let batches: Vec<RecordBatch> = reader
             .collect::<Result<Vec<_>, _>>()
@@ -395,7 +395,7 @@ fn write_sheets_arrow(
 
         // Column widths - parse "auto", "150px", or float values
         if let Some(widths) = sheet_dict.get_item("column_widths")? {
-            let widths_dict = widths.downcast::<PyDict>()?;
+            let widths_dict = widths.cast::<PyDict>()?;
             let parsed_widths: HashMap<String, ColumnWidth> = widths_dict.iter()
                 .filter_map(|(k, v)| {
                     let col_name: String = k.extract().ok()?;
@@ -423,7 +423,7 @@ fn write_sheets_arrow(
 
         // Extract column_formats
         if let Some(formats) = sheet_dict.get_item("column_formats")? {
-            let formats_dict = formats.downcast::<PyDict>()?;
+            let formats_dict = formats.cast::<PyDict>()?;
             let mut col_fmts = HashMap::new();
             for (key, value) in formats_dict.iter() {
                 let col_name: String = key.extract()?;
@@ -437,7 +437,7 @@ fn write_sheets_arrow(
 
         // Merge cells
         if let Some(merge) = sheet_dict.get_item("merge_cells")? {
-            let merge_list = merge.downcast::<pyo3::types::PyList>()?;
+            let merge_list = merge.cast::<pyo3::types::PyList>()?;
             for item in merge_list.iter() {
                 if let Ok(tuple) = item.extract::<(usize, usize, usize, usize)>() {
                     config.merge_cells.push(MergeRange {
@@ -452,9 +452,9 @@ fn write_sheets_arrow(
 
         // Data validations
         if let Some(validations) = sheet_dict.get_item("data_validations")? {
-            let validations_list = validations.downcast::<pyo3::types::PyList>()?;
+            let validations_list = validations.cast::<pyo3::types::PyList>()?;
             for val_dict in validations_list.iter() {
-                if let Ok(val_dict) = val_dict.downcast::<PyDict>() {
+                if let Ok(val_dict) = val_dict.cast::<PyDict>() {
                     if let Ok(validation) = extract_data_validation(&val_dict) {
                         config.data_validations.push(validation);
                     }
@@ -464,7 +464,7 @@ fn write_sheets_arrow(
 
         // Hyperlinks
         if let Some(hyperlinks) = sheet_dict.get_item("hyperlinks")? {
-            let hyperlinks_list = hyperlinks.downcast::<pyo3::types::PyList>()?;
+            let hyperlinks_list = hyperlinks.cast::<pyo3::types::PyList>()?;
             for item in hyperlinks_list.iter() {
                 if let Ok((row, col, url, display)) = item.extract::<(usize, usize, String, Option<String>)>() {
                     config.hyperlinks.push(Hyperlink { row, col, url, display });
@@ -474,7 +474,7 @@ fn write_sheets_arrow(
 
         // Row heights
         if let Some(heights) = sheet_dict.get_item("row_heights")? {
-            let heights_dict = heights.downcast::<PyDict>()?;
+            let heights_dict = heights.cast::<PyDict>()?;
             let mut row_heights = HashMap::new();
             for (key, value) in heights_dict.iter() {
                 let row: usize = key.extract()?;
@@ -486,9 +486,9 @@ fn write_sheets_arrow(
 
         // Cell styles
         if let Some(styles) = sheet_dict.get_item("cell_styles")? {
-            let styles_list = styles.downcast::<pyo3::types::PyList>()?;
+            let styles_list = styles.cast::<pyo3::types::PyList>()?;
             for style_dict in styles_list.iter() {
-                if let Ok(style_dict) = style_dict.downcast::<PyDict>() {
+                if let Ok(style_dict) = style_dict.cast::<PyDict>() {
                     if let Ok(cell_style) = extract_cell_style(&style_dict) {
                         config.cell_styles.push(cell_style);
                     }
@@ -498,7 +498,7 @@ fn write_sheets_arrow(
 
         // Formulas
         if let Some(formulas) = sheet_dict.get_item("formulas")? {
-            let formulas_list = formulas.downcast::<pyo3::types::PyList>()?;
+            let formulas_list = formulas.cast::<pyo3::types::PyList>()?;
             for item in formulas_list.iter() {
                 if let Ok((row, col, formula, cached_value)) = item.extract::<(usize, usize, String, Option<String>)>() {
                     config.formulas.push(Formula { row, col, formula, cached_value });
@@ -508,9 +508,9 @@ fn write_sheets_arrow(
 
         // Conditional formats
         if let Some(cond_formats) = sheet_dict.get_item("conditional_formats")? {
-            let cond_list = cond_formats.downcast::<pyo3::types::PyList>()?;
+            let cond_list = cond_formats.cast::<pyo3::types::PyList>()?;
             for cond_dict in cond_list.iter() {
-                if let Ok(cond_dict) = cond_dict.downcast::<PyDict>() {
+                if let Ok(cond_dict) = cond_dict.cast::<PyDict>() {
                     if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
                         config.conditional_formats.push(cond_format);
                     }
@@ -520,9 +520,9 @@ fn write_sheets_arrow(
 
         // Tables
         if let Some(tables_vec) = sheet_dict.get_item("tables")? {
-            let tables_list = tables_vec.downcast::<pyo3::types::PyList>()?;
+            let tables_list = tables_vec.cast::<pyo3::types::PyList>()?;
             for table_dict in tables_list.iter() {
-                if let Ok(table_dict) = table_dict.downcast::<PyDict>() {
+                if let Ok(table_dict) = table_dict.cast::<PyDict>() {
                     if let Ok(table) = extract_table(&table_dict) {
                         config.tables.push(table);
                     }
@@ -532,9 +532,9 @@ fn write_sheets_arrow(
 
         // Charts
         if let Some(charts_vec) = sheet_dict.get_item("charts")? {
-            let charts_list = charts_vec.downcast::<pyo3::types::PyList>()?;
+            let charts_list = charts_vec.cast::<pyo3::types::PyList>()?;
             for chart_dict in charts_list.iter() {
-                if let Ok(chart_dict) = chart_dict.downcast::<PyDict>() {
+                if let Ok(chart_dict) = chart_dict.cast::<PyDict>() {
                     if let Ok(chart) = extract_chart(&chart_dict) {
                         config.charts.push(chart);
                     }
@@ -544,9 +544,9 @@ fn write_sheets_arrow(
 
         // Images
         if let Some(images_vec) = sheet_dict.get_item("images")? {
-            let images_list = images_vec.downcast::<pyo3::types::PyList>()?;
+            let images_list = images_vec.cast::<pyo3::types::PyList>()?;
             for image_dict in images_list.iter() {
-                if let Ok(image_dict) = image_dict.downcast::<PyDict>() {
+                if let Ok(image_dict) = image_dict.cast::<PyDict>() {
                     if let Ok(image) = extract_image(&image_dict) {
                         config.images.push(image);
                     }
@@ -662,7 +662,7 @@ fn write_sheet_arrow_to_bytes(
     header_content: Option<Vec<(usize, usize, String)>>
 ) -> PyResult<Py<pyo3::types::PyBytes>> {
     // Convert PyArrow data to RecordBatch
-    let any_batch = AnyRecordBatch::extract_bound(arrow_data)?;
+    let any_batch: AnyRecordBatch = arrow_data.extract()?;
     let reader = any_batch.into_reader()?;
     
     let batches: Vec<RecordBatch> = reader
@@ -789,7 +789,7 @@ fn write_sheets_arrow_to_bytes(
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing 'data' key"))?;
 
             // Convert PyArrow data to RecordBatch
-            let any_batch = AnyRecordBatch::extract_bound(&arrow_item)?;
+            let any_batch: AnyRecordBatch = arrow_item.extract()?;
             let reader = any_batch.into_reader()?;
             
             let batches: Vec<RecordBatch> = reader
@@ -916,7 +916,7 @@ fn extract_sheet_data(
 }
 
 fn extract_column(py: Python, value: &Bound<PyAny>) -> PyResult<Vec<CellValue>> {
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         let len = list.len();
         let mut result = Vec::with_capacity(len);
 
@@ -1016,7 +1016,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
     
     // Extract font
     if let Some(font_dict) = dict.get_item("font")? {
-        let font_dict = font_dict.downcast::<PyDict>()?;
+        let font_dict = font_dict.cast::<PyDict>()?;
         cell_style.font = Some(FontStyle {
             bold: font_dict.get_item("bold")?.map(|v| v.extract()).unwrap_or(Ok(false))?,
             italic: font_dict.get_item("italic")?.map(|v| v.extract()).unwrap_or(Ok(false))?,
@@ -1029,7 +1029,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
     
     // Extract fill
     if let Some(fill_dict) = dict.get_item("fill")? {
-        let fill_dict = fill_dict.downcast::<PyDict>()?;
+        let fill_dict = fill_dict.cast::<PyDict>()?;
         let pattern: String = fill_dict.get_item("pattern")?.map(|v| v.extract()).unwrap_or(Ok("none".to_string()))?;
         cell_style.fill = Some(FillStyle {
             pattern_type: match pattern.as_str() {
@@ -1044,7 +1044,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
     
     // Extract border
     if let Some(border_dict) = dict.get_item("border")? {
-        let border_dict = border_dict.downcast::<PyDict>()?;
+        let border_dict = border_dict.cast::<PyDict>()?;
         
         let parse_side = |side_dict: &Bound<PyDict>| -> PyResult<BorderSide> {
             let style: String = side_dict.get_item("style")?.unwrap().extract()?;
@@ -1062,7 +1062,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
         };
         
         let left = if let Some(side) = border_dict.get_item("left")? {
-            if let Ok(side_dict) = side.downcast::<PyDict>() {
+            if let Ok(side_dict) = side.cast::<PyDict>() {
                 parse_side(side_dict).ok()
             } else {
                 None
@@ -1072,7 +1072,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
         };
         
         let right = if let Some(side) = border_dict.get_item("right")? {
-            if let Ok(side_dict) = side.downcast::<PyDict>() {
+            if let Ok(side_dict) = side.cast::<PyDict>() {
                 parse_side(side_dict).ok()
             } else {
                 None
@@ -1082,7 +1082,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
         };
         
         let top = if let Some(side) = border_dict.get_item("top")? {
-            if let Ok(side_dict) = side.downcast::<PyDict>() {
+            if let Ok(side_dict) = side.cast::<PyDict>() {
                 parse_side(side_dict).ok()
             } else {
                 None
@@ -1092,7 +1092,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
         };
         
         let bottom = if let Some(side) = border_dict.get_item("bottom")? {
-            if let Ok(side_dict) = side.downcast::<PyDict>() {
+            if let Ok(side_dict) = side.cast::<PyDict>() {
                 parse_side(side_dict).ok()
             } else {
                 None
@@ -1111,7 +1111,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
     
     // Extract alignment
     if let Some(align_dict) = dict.get_item("alignment")? {
-        let align_dict = align_dict.downcast::<PyDict>()?;
+        let align_dict = align_dict.cast::<PyDict>()?;
         
         let horizontal = align_dict.get_item("horizontal")?.and_then(|v| {
             let s: String = v.extract().ok()?;
@@ -1209,7 +1209,7 @@ fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalForma
     
     // Extract style or use default
     let style = if let Some(style_dict) = dict.get_item("style")? {
-        let style_dict = style_dict.downcast::<PyDict>()?;
+        let style_dict = style_dict.cast::<PyDict>()?;
         extract_cell_style_inner(style_dict)?
     } else {
         // Default: red bold text

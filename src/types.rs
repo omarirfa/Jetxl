@@ -34,7 +34,7 @@ impl CellValue {
             return Ok(CellValue::Bool(b));
         }
 
-        if let Ok(dt) = value.downcast::<PyDateTime>() {
+        if let Ok(dt) = value.cast::<PyDateTime>() {
             use pyo3::types::{PyDateAccess, PyTimeAccess};
             let datetime = NaiveDate::from_ymd_opt(
                 dt.get_year(),
