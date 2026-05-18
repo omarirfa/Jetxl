@@ -96,16 +96,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: write
+      attestations: write
     environment:
       name: pypi
     steps:
       - uses: actions/download-artifact@v4
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v3
         with:
-          path: dist
-          merge-multiple: true
+          subject-path: 'wheels-*/*'
       - name: Show downloaded files
-        run: find dist -type f | sort
+        run: find . -name '*.whl' -o -name '*.tar.gz' | sort
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Publish to PyPI
-        run: uv publish --check-url https://pypi.org/simple/ dist/*.whl dist/*.tar.gz
+        run: uv publish 'wheels-*/*' 'sdist/*'
