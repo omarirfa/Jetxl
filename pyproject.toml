@@ -4,8 +4,14 @@ build-backend = "maturin"
 
 [project]
 name = "jetxl"
+description = "Blazingly fast Excel writer for Python, powered by Rust"
 requires-python = ">=3.10"
 readme = "README.md"
+authors = [{ name = "Omar Irfan Khan" }]
+keywords = ["excel", "xlsx", "rust", "arrow", "polars", "pandas", "spreadsheet"]
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
+dynamic = ["version"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -14,16 +20,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
 ]
 
-license = "Apache-2.0"
-license-files = ["LICEN[CS]E*"]
-
-dynamic = ["version"]
-
 [project.urls]
-Homepage = "https://github.com/omarirfa/Jetxl"
-Issues = "https://github.com/omarirfa/Jetxl/issues"
+Homepage = "https://github.com/omarirfa/jetxl"
+Issues = "https://github.com/omarirfa/jetxl/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
