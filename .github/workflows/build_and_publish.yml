@@ -8,7 +8,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
   # ---------------------------------------------------------------------------
-  # Linux build
+  # Linux
   # ---------------------------------------------------------------------------
   linux:
     name: Build Linux wheels
@@ -29,7 +29,7 @@ jobs:
           path: dist
 
   # ---------------------------------------------------------------------------
-  # Windows + macOS: split by Python version so each wheel builds in parallel.
+  # Windows + macOS: one job per (os, python) pair.
   # ---------------------------------------------------------------------------
   wheels:
     name: Build ${{ matrix.os }} / py${{ matrix.python }}
@@ -45,7 +45,6 @@ jobs:
           - macos-26             # macOS 26 arm64
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
-          # map os -> target
           - os: windows-2025-vs2026
             target: x86_64
           - os: macos-15-intel
@@ -65,7 +64,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist --interpreter python
           sccache: "true"
       - name: Upload wheel
         uses: actions/upload-artifact@v4
