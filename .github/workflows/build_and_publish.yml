@@ -111,4 +111,4 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Publish to PyPI
-        run: uv publish 'wheels-*/*' 'sdist/*'
+        run: uv publish --check-url https://pypi.org/simple/ 'wheels-*/*' 'sdist/*'
