@@ -1,6 +1,6 @@
 [package]
 name = "jetxl"
-version = "0.2.1-alpha"
+version = "0.2.2-alpha"
 edition = "2021"
 authors = ["Omar Irfan Khan"]
 description = "Blazing fast xlsx writer"
