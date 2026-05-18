@@ -1,3 +1,9 @@
+[![PyPI Version](https://img.shields.io/pypi/v/jetxl?style=flat-square&logo=pypi)](https://pypi.org/project/jetxl/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/jetxl?style=flat-square&logo=python)](https://pypi.org/project/jetxl/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/jetxl?style=flat-square&logo=pypi&label=downloads)](https://pypi.org/project/jetxl/)
+[![Wheel](https://img.shields.io/pypi/wheel/jetxl?style=flat-square)](https://pypi.org/project/jetxl/#files)
+[![CI](https://img.shields.io/github/actions/workflow/status/omarirfa/jetxl/build_and_publish.yml?style=flat-square&logo=github&label=build)](https://github.com/omarirfa/jetxl/actions)
+[![License](https://img.shields.io/pypi/l/jetxl?style=flat-square)](https://github.com/omarirfa/jetxl/blob/main/LICENSE)
 # Jetxl ✈️
 **Blazingly fast Excel (XLSX) writer for Python, powered by Rust**
 
