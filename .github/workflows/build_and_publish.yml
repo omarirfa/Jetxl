@@ -1,9 +1,8 @@
 name: build_and_publish
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
   workflow_dispatch:
 
@@ -81,9 +80,14 @@ jobs:
 
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Show downloaded files
+        run: find dist -type f
 
       - name: Publish package
         uses: PyO3/maturin-action@v1
         with:
           command: upload
-          args: --non-interactive --skip-existing wheels-*/*
+          args: --non-interactive --skip-existing dist/**/*.whl dist/**/*.tar.gz
