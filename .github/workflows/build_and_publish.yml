@@ -1,113 +1,112 @@
 # check runners here https://github.com/actions/runner-images/tree/main
-
 name: build_and_publish
-
 on:
   release:
     types: [published]
-
   workflow_dispatch:
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
-  wheels:
-    name: Build wheels
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: true
-
-      matrix:
-        include:
-          # Linux
-          - os: ubuntu-24.04
-            target: x86_64
-      
-          # Windows
-          - os: windows-2025-vs2026
-            target: x86_64
-      
-          # macOS Intel
-          - os: macos-15-intel
-            target: x86_64
-      
-          - os: macos-26-intel
-            target: x86_64
-      
-          # macOS ARM64
-          - os: macos-14
-            target: aarch64
-      
-          - os: macos-26
-            target: aarch64
-
+  # ---------------------------------------------------------------------------
+  # Linux build
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Build Linux wheels
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist --find-interpreter
+          sccache: "true"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: dist
 
-      # Install ALL supported Python versions
+  # ---------------------------------------------------------------------------
+  # Windows + macOS: split by Python version so each wheel builds in parallel.
+  # ---------------------------------------------------------------------------
+  wheels:
+    name: Build ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - windows-2025-vs2026
+          - macos-15-intel       # macOS 15 x64
+          - macos-26-intel       # macOS 26 x64
+          - macos-14             # macOS 14 arm64
+          - macos-26             # macOS 26 arm64
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # map os -> target
+          - os: windows-2025-vs2026
+            target: x86_64
+          - os: macos-15-intel
+            target: x86_64
+          - os: macos-26-intel
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: macos-26
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.10
-            3.11
-            3.12
-            3.13
-            3.14
-
-      - name: Build wheels
+          python-version: ${{ matrix.python }}
+      - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
-
-      - name: Upload wheels
+          sccache: "true"
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          name: wheels-${{ matrix.os }}-py${{ matrix.python }}
           path: dist
 
+  # ---------------------------------------------------------------------------
   sdist:
     name: Build sdist
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: dist
 
+  # ---------------------------------------------------------------------------
   publish:
     name: Publish to PyPI
-    needs: [wheels, sdist]
+    needs: [linux, wheels, sdist]
     runs-on: ubuntu-latest
-
     permissions:
       id-token: write
-
     environment:
       name: pypi
-
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-
+          merge-multiple: true
       - name: Show downloaded files
-        run: find dist -type f
-
-      - name: Publish package
-        uses: PyO3/maturin-action@v1
-        with:
-          command: upload
-          args: --non-interactive --skip-existing dist/**/*.whl dist/**/*.tar.gz
+        run: find dist -type f | sort
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Publish to PyPI
+        run: uv publish --check-url https://pypi.org/simple/ dist/*.whl dist/*.tar.gz
