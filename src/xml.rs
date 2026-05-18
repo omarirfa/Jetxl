@@ -509,6 +509,7 @@ fn estimate_cell_xml_size(array: &dyn Array, data_type: &DataType) -> Result<usi
             
             Ok(55 + avg_string_len + (avg_string_len / 10))
         }
+        
         DataType::LargeUtf8 => {
             let arr = array.as_any().downcast_ref::<LargeStringArray>()
                 .ok_or_else(|| WriteError::Validation("Type mismatch".to_string()))?;
@@ -1773,7 +1774,7 @@ pub fn generate_sheet_xml_from_arrow(
     // SheetFormatPr (default row height)
     buf.extend_from_slice(b"<sheetFormatPr defaultRowHeight=\"");
     let default_height = config.default_row_height.unwrap_or(15.0);
-    buf.extend_from_slice(ryu::Buffer::new().format(default_height).as_bytes());
+    buf.extend_from_slice(zmij::Buffer::new().format(default_height).as_bytes());
     buf.push(b'\"');
     if config.default_row_height.is_some() {
         buf.extend_from_slice(b" customHeight=\"1\"");
@@ -1813,7 +1814,7 @@ pub fn generate_sheet_xml_from_arrow(
             buf.extend_from_slice(b"\" max=\"");
             buf.extend_from_slice(itoa::Buffer::new().format(col_idx + 1).as_bytes());
             buf.extend_from_slice(b"\" width=\"");
-            buf.extend_from_slice(ryu::Buffer::new().format(width).as_bytes());
+            buf.extend_from_slice(zmij::Buffer::new().format(width).as_bytes());
             buf.extend_from_slice(b"\" customWidth=\"1\"");
             
             // Hidden column
@@ -1839,7 +1840,7 @@ pub fn generate_sheet_xml_from_arrow(
         })
         .collect();
 
-    let mut ryu_buf = ryu::Buffer::new();
+    let mut ryu_buf = zmij::Buffer::new();
     let mut int_buf = itoa::Buffer::new();
     let mut cell_int_buf = itoa::Buffer::new();
     let mut cell_ref = [0u8; 16];
@@ -1886,7 +1887,7 @@ pub fn generate_sheet_xml_from_arrow(
             if let Some(heights) = &config.row_heights {
                 if let Some(height) = heights.get(&row_num) {
                     buf.extend_from_slice(b" ht=\"");  // Note: leading space for separate attribute
-                    buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                    buf.extend_from_slice(zmij::Buffer::new().format(*height).as_bytes());
                     buf.extend_from_slice(b"\" customHeight=\"1\"");
                 }
             }
@@ -1935,7 +1936,7 @@ pub fn generate_sheet_xml_from_arrow(
         buf.push(b'\"');
         if let Some(height) = header_row_height {
             buf.extend_from_slice(b" ht=\"");
-            buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+            buf.extend_from_slice(zmij::Buffer::new().format(*height).as_bytes());
             buf.extend_from_slice(b"\" customHeight=\"1\"");
         }
         // Hidden row check for header
@@ -2001,7 +2002,7 @@ pub fn generate_sheet_xml_from_arrow(
                     if has_row_heights {
                         if let Some(height) = config.row_heights.as_ref().unwrap().get(&current_row) {
                             buf.extend_from_slice(b" ht=\"");
-                            buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                            buf.extend_from_slice(zmij::Buffer::new().format(*height).as_bytes());
                             buf.extend_from_slice(b"\" customHeight=\"1\"");
                         }
                     }
@@ -2051,7 +2052,7 @@ pub fn generate_sheet_xml_from_arrow(
             if has_row_heights {
                 if let Some(height) = config.row_heights.as_ref().unwrap().get(&row_num) {
                     buf.extend_from_slice(b" ht=\"");
-                    buf.extend_from_slice(ryu::Buffer::new().format(*height).as_bytes());
+                    buf.extend_from_slice(zmij::Buffer::new().format(*height).as_bytes());
                     buf.extend_from_slice(b"\" customHeight=\"1\"");
                 }
             }
@@ -2198,9 +2199,9 @@ pub fn generate_sheet_xml_from_arrow(
                 }
                 ValidationType::Decimal { min, max } => {
                     buf.extend_from_slice(b"<formula1>");
-                    buf.extend_from_slice(ryu::Buffer::new().format(*min).as_bytes());
+                    buf.extend_from_slice(zmij::Buffer::new().format(*min).as_bytes());
                     buf.extend_from_slice(b"</formula1><formula2>");
-                    buf.extend_from_slice(ryu::Buffer::new().format(*max).as_bytes());
+                    buf.extend_from_slice(zmij::Buffer::new().format(*max).as_bytes());
                     buf.extend_from_slice(b"</formula2>");
                 }
                 ValidationType::TextLength { min, max } => {
@@ -2360,7 +2361,7 @@ fn write_arrow_cell_to_xml_optimized(
     hyperlink: Option<&&Hyperlink>,
     formula: Option<&&Formula>,
     buf: &mut Vec<u8>,
-    ryu_buf: &mut ryu::Buffer,
+    ryu_buf: &mut zmij::Buffer,
     int_buf: &mut itoa::Buffer,
 ) -> Result<(), WriteError> {
     use arrow_array::*;
@@ -2633,7 +2634,7 @@ fn write_number_cell(
     cell_ref: &[u8],
     style_id: Option<u32>,
     buf: &mut Vec<u8>,
-    ryu_buf: &mut ryu::Buffer,
+    ryu_buf: &mut zmij::Buffer,
     int_buf: &mut itoa::Buffer,
 ) {
 
@@ -2673,7 +2674,7 @@ fn write_date_cell(
     cell_ref: &[u8],
     style_id: Option<u32>,
     buf: &mut Vec<u8>,
-    ryu_buf: &mut ryu::Buffer,
+    ryu_buf: &mut zmij::Buffer,
 ) {
     buf.extend_from_slice(b"<c r=\"");
     buf.extend_from_slice(cell_ref);
@@ -2751,7 +2752,7 @@ pub fn generate_sheet_xml_from_dict(
         })
         .collect();
 
-    let mut ryu_buf = ryu::Buffer::new();
+    let mut ryu_buf = zmij::Buffer::new();
     let mut int_buf = itoa::Buffer::new();
     let mut cell_int_buf = itoa::Buffer::new();
     let mut cell_ref = [0u8; 16];
