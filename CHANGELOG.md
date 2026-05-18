@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.4-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.3-alpha...v0.2.4-alpha) (2026-05-18)
+
+
+### Bug Fixes
+
+* remove some mac conflicting architectures ([ed6b3d7](https://github.com/omarirfa/Jetxl/commit/ed6b3d7035694f76156d3c53bf14745aeb8c93eb))
+* remove some mac conflicting architectures ([46d5a4e](https://github.com/omarirfa/Jetxl/commit/46d5a4e3e2be72c9f4dd670c732c3f51901e2bcc))
+
 ## [0.2.3-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.2-alpha...v0.2.3-alpha) (2026-05-18)
 
 
