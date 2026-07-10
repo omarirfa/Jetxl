@@ -2,6 +2,10 @@ mod types;
 mod writer;
 mod xml;
 mod styles;
+mod fastzip;
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -10,6 +14,79 @@ use arrow_array::RecordBatch;
 use types::{CellValue, SheetData};
 use styles::*;
 use std::collections::HashMap;
+
+/// Materialise dictionary-encoded (categorical) columns into their value type.
+///
+/// pandas `Categorical` and Polars `Categorical`/`Enum` columns arrive as Arrow
+/// `Dictionary` arrays (dict<values=Utf8, indices=intN>). The per-cell writer
+/// only handles concrete leaf types, so without this those extremely common
+/// columns were rejected outright ("unsupported Arrow type"). Decoding once per
+/// batch — off the per-cell hot path — casts each dictionary column to its plain
+/// value array (e.g. Utf8), after which the normal write path handles it.
+///
+/// The same mechanism also normalizes Arrow "view" types: when a Polars
+/// DataFrame is passed directly (via the Arrow PyCapsule interface, no
+/// `.to_arrow()`), strings arrive as `Utf8View` and binary as `BinaryView`,
+/// which the per-cell writer doesn't recognize. These are cast to `Utf8` /
+/// `Binary` here so a bare `pl.DataFrame` "just works". Any column that is
+/// already a concrete non-view, non-dictionary type is passed through untouched,
+/// so existing (pyarrow / pandas) workloads pay nothing beyond a cheap scan.
+fn decode_dictionary_columns(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>, PyErr> {
+    use arrow_schema::{DataType, Field, Schema};
+    use std::sync::Arc;
+
+    // What a given input column type should be normalized to (None = leave as-is).
+    fn normalized_target(dt: &DataType) -> Option<DataType> {
+        match dt {
+            DataType::Dictionary(_, value_type) => Some(value_type.as_ref().clone()),
+            DataType::Utf8View => Some(DataType::Utf8),
+            DataType::BinaryView => Some(DataType::Binary),
+            _ => None,
+        }
+    }
+
+    // Fast path: if no batch has any column needing normalization, return as-is.
+    let needs_work = batches.iter().any(|b| {
+        b.schema().fields().iter().any(|f| normalized_target(f.data_type()).is_some())
+    });
+    if !needs_work {
+        return Ok(batches);
+    }
+
+    let mut out = Vec::with_capacity(batches.len());
+    for batch in batches {
+        let schema = batch.schema();
+        let mut new_fields: Vec<Arc<Field>> = Vec::with_capacity(schema.fields().len());
+        let mut new_cols = Vec::with_capacity(batch.num_columns());
+        for (i, field) in schema.fields().iter().enumerate() {
+            match normalized_target(field.data_type()) {
+                Some(target_dt) => {
+                    let decoded = arrow::compute::cast(batch.column(i), &target_dt)
+                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            format!("Failed to normalize column '{}' ({:?} -> {:?}): {}",
+                                    field.name(), field.data_type(), target_dt, e)
+                        ))?;
+                    new_fields.push(Arc::new(Field::new(
+                        field.name(), target_dt, field.is_nullable(),
+                    )));
+                    new_cols.push(decoded);
+                }
+                None => {
+                    new_fields.push(field.clone());
+                    new_cols.push(batch.column(i).clone());
+                }
+            }
+        }
+        let new_schema = Arc::new(Schema::new(new_fields));
+        let new_batch = RecordBatch::try_new(new_schema, new_cols)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Failed to rebuild batch after column normalization: {}", e)
+            ))?;
+        out.push(new_batch);
+    }
+    Ok(out)
+}
+
 
 // ============================================================================
 // LEGACY API - Dict-based (backward compatibility)
@@ -166,8 +243,8 @@ fn write_sheet_arrow(
     auto_width: bool,
     styled_headers: bool,
     write_header_row: bool,
-    column_widths: Option<HashMap<String, Bound<PyAny>>>,
-    column_formats: Option<HashMap<String, String>>,
+    column_widths: Option<Bound<PyDict>>,
+    column_formats: Option<Bound<PyDict>>,
     merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
     data_validations: Option<Vec<Bound<PyDict>>>,
     hyperlinks: Option<Vec<(usize, usize, String, Option<String>)>>,
@@ -182,7 +259,7 @@ fn write_sheet_arrow(
     zoom_scale: Option<u16>,
     tab_color: Option<String>,
     default_row_height: Option<f64>,
-    hidden_columns: Option<Vec<usize>>,
+    hidden_columns: Option<Vec<Bound<PyAny>>>,
     hidden_rows: Option<Vec<usize>>,
     right_to_left: bool,
     data_start_row: usize,
@@ -203,34 +280,63 @@ fn write_sheet_arrow(
             "Arrow data is empty"
         ));
     }
+    let batches = decode_dictionary_columns(batches)?;
 
     let name = sheet_name.unwrap_or_else(|| "Sheet1".to_string());
 
-    // Parse column_widths - supports float, "auto", or "150px"
-    let parsed_column_widths = column_widths.map(|cw| {
-        cw.into_iter()
-            .filter_map(|(k, v)| {
-                let width = if let Ok(s) = v.extract::<String>() {
-                    if s.to_lowercase() == "auto" {
-                        ColumnWidth::Auto
-                    } else if s.ends_with("px") {
-                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
-                        ColumnWidth::Pixels(px)
-                    } else {
-                        // Try parsing as number string
-                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
-                    }
-                } else if let Ok(f) = v.extract::<f64>() {
-                    ColumnWidth::Characters(f)
-                } else if let Ok(i) = v.extract::<i64>() {
-                    ColumnWidth::Characters(i as f64)
+    // Column names, used to resolve int-or-name column references below.
+    let field_names = schema_field_names(&batches);
+
+    // Parse column_widths - keys accept int index OR str name; values accept
+    // float, "auto", or "150px".
+    let parsed_column_widths = if let Some(cw) = column_widths {
+        let resolved = resolve_column_dict_to_names(&cw, &field_names)?;
+        let mut map: HashMap<String, ColumnWidth> = HashMap::with_capacity(resolved.len());
+        for (col_name, v) in resolved {
+            let width = if let Ok(s) = v.extract::<String>() {
+                if s.to_lowercase() == "auto" {
+                    ColumnWidth::Auto
+                } else if s.ends_with("px") {
+                    let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                    ColumnWidth::Pixels(px)
                 } else {
-                    return None;
-                };
-                Some((k, width))
-            })
-            .collect()
-    });
+                    ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                }
+            } else if let Ok(f) = v.extract::<f64>() {
+                ColumnWidth::Characters(f)
+            } else if let Ok(i) = v.extract::<i64>() {
+                ColumnWidth::Characters(i as f64)
+            } else {
+                continue;
+            };
+            map.insert(col_name, width);
+        }
+        Some(map)
+    } else {
+        None
+    };
+
+    // Parse column_formats - keys accept int index OR str name.
+    let parsed_column_formats = if let Some(cf) = column_formats {
+        let resolved = resolve_column_dict_to_names(&cf, &field_names)?;
+        let mut map: HashMap<String, NumberFormat> = HashMap::with_capacity(resolved.len());
+        for (col_name, v) in resolved {
+            let fmt_str: String = v.extract()?;
+            if let Some(fmt) = parse_number_format(&fmt_str) {
+                map.insert(col_name, fmt);
+            }
+        }
+        Some(map)
+    } else {
+        None
+    };
+
+    // Resolve hidden_columns - accepts int indices OR str names.
+    let parsed_hidden_columns = if let Some(hc) = hidden_columns {
+        resolve_column_list_to_indices(&hc, &field_names)?
+    } else {
+        std::collections::HashSet::new()
+    };
 
     // Build config
     let mut config = StyleConfig {
@@ -241,11 +347,7 @@ fn write_sheet_arrow(
         write_header_row,
         column_widths: parsed_column_widths,
         auto_width,
-        column_formats: column_formats.map(|cf| {
-            cf.into_iter()
-                .filter_map(|(k, v)| parse_number_format(&v).map(|fmt| (k, fmt)))
-                .collect()
-        }),
+        column_formats: parsed_column_formats,
         merge_cells: merge_cells.unwrap_or_default().into_iter().map(|(sr, sc, er, ec)| {
             MergeRange { start_row: sr, start_col: sc, end_row: er, end_col: ec }
         }).collect(),
@@ -265,7 +367,7 @@ fn write_sheet_arrow(
         zoom_scale,
         tab_color,
         default_row_height,
-        hidden_columns: hidden_columns.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        hidden_columns: parsed_hidden_columns,
         hidden_rows: hidden_rows.map(|v| v.into_iter().collect()).unwrap_or_default(),
         right_to_left,
         data_start_row,
@@ -369,10 +471,19 @@ fn write_sheets_arrow(
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 format!("Failed to read Arrow data: {}", e)
             ))?;
+        let batches = decode_dictionary_columns(batches)?;
         
         // Build config from optional parameters
         let mut config = StyleConfig::default();
-        
+
+        // Column names, used to resolve int-or-name column references the same
+        // way the single-sheet path does. Without this, the multi-sheet FILE
+        // path silently dropped string-name hidden_columns and integer-index
+        // column_widths/column_formats/hidden_columns -- a path-divergence bug
+        // where the same kwargs worked on the single-sheet and bytes paths but
+        // not here.
+        let field_names = schema_field_names(&batches);
+
         // Basic options
         if let Some(auto_filter) = sheet_dict.get_item("auto_filter")?.and_then(|v| v.extract().ok()) {
             config.auto_filter = auto_filter;
@@ -393,40 +504,40 @@ fn write_sheets_arrow(
             config.write_header_row = write_header_row;
         }
 
-        // Column widths - parse "auto", "150px", or float values
+        // Column widths - keys accept int index OR str name; values accept
+        // "auto", "150px", or a numeric width. (Matches the single-sheet path.)
         if let Some(widths) = sheet_dict.get_item("column_widths")? {
             let widths_dict = widths.cast::<PyDict>()?;
-            let parsed_widths: HashMap<String, ColumnWidth> = widths_dict.iter()
-                .filter_map(|(k, v)| {
-                    let col_name: String = k.extract().ok()?;
-                    let width = if let Ok(s) = v.extract::<String>() {
-                        if s.to_lowercase() == "auto" {
-                            ColumnWidth::Auto
-                        } else if s.ends_with("px") {
-                            let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
-                            ColumnWidth::Pixels(px)
-                        } else {
-                            ColumnWidth::Characters(s.parse().unwrap_or(8.43))
-                        }
-                    } else if let Ok(f) = v.extract::<f64>() {
-                        ColumnWidth::Characters(f)
-                    } else if let Ok(i) = v.extract::<i64>() {
-                        ColumnWidth::Characters(i as f64)
+            let resolved = resolve_column_dict_to_names(&widths_dict, &field_names)?;
+            let mut parsed_widths: HashMap<String, ColumnWidth> = HashMap::with_capacity(resolved.len());
+            for (col_name, v) in resolved {
+                let width = if let Ok(s) = v.extract::<String>() {
+                    if s.to_lowercase() == "auto" {
+                        ColumnWidth::Auto
+                    } else if s.ends_with("px") {
+                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                        ColumnWidth::Pixels(px)
                     } else {
-                        return None;
-                    };
-                    Some((col_name, width))
-                })
-                .collect();
+                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                    }
+                } else if let Ok(f) = v.extract::<f64>() {
+                    ColumnWidth::Characters(f)
+                } else if let Ok(i) = v.extract::<i64>() {
+                    ColumnWidth::Characters(i as f64)
+                } else {
+                    continue;
+                };
+                parsed_widths.insert(col_name, width);
+            }
             config.column_widths = Some(parsed_widths);
         }
 
-        // Extract column_formats
+        // Extract column_formats - keys accept int index OR str name.
         if let Some(formats) = sheet_dict.get_item("column_formats")? {
             let formats_dict = formats.cast::<PyDict>()?;
+            let resolved = resolve_column_dict_to_names(&formats_dict, &field_names)?;
             let mut col_fmts = HashMap::new();
-            for (key, value) in formats_dict.iter() {
-                let col_name: String = key.extract()?;
+            for (col_name, value) in resolved {
                 let fmt_str: String = value.extract()?;
                 if let Some(fmt) = parse_number_format(&fmt_str) {
                     col_fmts.insert(col_name, fmt);
@@ -567,11 +678,19 @@ fn write_sheets_arrow(
         if let Some(val) = sheet_dict.get_item("default_row_height")?.and_then(|v| v.extract().ok()) {
             config.default_row_height = Some(val);
         }
-        if let Some(val) = sheet_dict.get_item("hidden_columns")?.and_then(|v| v.extract().ok()) {
-            config.hidden_columns = val;
+        // hidden_columns accepts int indices OR str names (same as single-sheet
+        // path). Raw extract into HashSet<usize> silently dropped string names.
+        if let Some(hc) = sheet_dict.get_item("hidden_columns")? {
+            if let Ok(list) = hc.extract::<Vec<Bound<PyAny>>>() {
+                config.hidden_columns = resolve_column_list_to_indices(&list, &field_names)?;
+            }
         }
-        if let Some(val) = sheet_dict.get_item("hidden_rows")?.and_then(|v| v.extract().ok()) {
-            config.hidden_rows = val;
+        // hidden_rows: a Python list[int] extracts to Vec<usize>, NOT directly
+        // to HashSet<usize> -- extracting straight to the set fails silently and
+        // dropped every hidden row on the multi-sheet path. Collect via Vec, the
+        // same way the single-sheet path does.
+        if let Some(val) = sheet_dict.get_item("hidden_rows")?.and_then(|v| v.extract::<Vec<usize>>().ok()) {
+            config.hidden_rows = val.into_iter().collect();
         }
         if let Some(val) = sheet_dict.get_item("right_to_left")?.and_then(|v| v.extract().ok()) {
             config.right_to_left = val;
@@ -639,8 +758,8 @@ fn write_sheet_arrow_to_bytes(
     auto_width: bool,
     styled_headers: bool,
     write_header_row: bool,
-    column_widths: Option<HashMap<String, Bound<PyAny>>>,
-    column_formats: Option<HashMap<String, String>>,
+    column_widths: Option<Bound<PyDict>>,
+    column_formats: Option<Bound<PyDict>>,
     merge_cells: Option<Vec<(usize, usize, usize, usize)>>,
     data_validations: Option<Vec<Bound<PyDict>>>,
     hyperlinks: Option<Vec<(usize, usize, String, Option<String>)>>,
@@ -655,7 +774,7 @@ fn write_sheet_arrow_to_bytes(
     zoom_scale: Option<u16>,
     tab_color: Option<String>,
     default_row_height: Option<f64>,
-    hidden_columns: Option<Vec<usize>>,
+    hidden_columns: Option<Vec<Bound<PyAny>>>,
     hidden_rows: Option<Vec<usize>>,
     right_to_left: bool,
     data_start_row: usize,
@@ -674,42 +793,64 @@ fn write_sheet_arrow_to_bytes(
     if batches.is_empty() {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Empty data"));
     }
+    let batches = decode_dictionary_columns(batches)?;
 
     let sheet = sheet_name.as_deref().unwrap_or("Sheet1");
 
-    // Parse column_widths - supports float, "auto", or "150px"
-    let parsed_column_widths = column_widths.map(|cw| {
-        cw.into_iter()
-            .filter_map(|(k, v)| {
-                let width = if let Ok(s) = v.extract::<String>() {
-                    if s.to_lowercase() == "auto" {
-                        ColumnWidth::Auto
-                    } else if s.ends_with("px") {
-                        let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
-                        ColumnWidth::Pixels(px)
-                    } else {
-                        // Try parsing as number string
-                        ColumnWidth::Characters(s.parse().unwrap_or(8.43))
-                    }
-                } else if let Ok(f) = v.extract::<f64>() {
-                    ColumnWidth::Characters(f)
-                } else if let Ok(i) = v.extract::<i64>() {
-                    ColumnWidth::Characters(i as f64)
+    // Column names for int-or-name reference resolution.
+    let field_names = schema_field_names(&batches);
+
+    // Parse column_widths - keys accept int index OR str name.
+    let parsed_column_widths = if let Some(cw) = column_widths {
+        let resolved = resolve_column_dict_to_names(&cw, &field_names)?;
+        let mut map: HashMap<String, ColumnWidth> = HashMap::with_capacity(resolved.len());
+        for (col_name, v) in resolved {
+            let width = if let Ok(s) = v.extract::<String>() {
+                if s.to_lowercase() == "auto" {
+                    ColumnWidth::Auto
+                } else if s.ends_with("px") {
+                    let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                    ColumnWidth::Pixels(px)
                 } else {
-                    return None;
-                };
-                Some((k, width))
-            })
-            .collect()
-    });
+                    ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                }
+            } else if let Ok(f) = v.extract::<f64>() {
+                ColumnWidth::Characters(f)
+            } else if let Ok(i) = v.extract::<i64>() {
+                ColumnWidth::Characters(i as f64)
+            } else {
+                continue;
+            };
+            map.insert(col_name, width);
+        }
+        Some(map)
+    } else {
+        None
+    };
+
+    // Parse column_formats - keys accept int index OR str name.
+    let parsed_column_formats = if let Some(cf) = column_formats {
+        let resolved = resolve_column_dict_to_names(&cf, &field_names)?;
+        let mut map: HashMap<String, NumberFormat> = HashMap::with_capacity(resolved.len());
+        for (col_name, v) in resolved {
+            let fmt_str: String = v.extract()?;
+            if let Some(fmt) = parse_number_format(&fmt_str) {
+                map.insert(col_name, fmt);
+            }
+        }
+        Some(map)
+    } else {
+        None
+    };
+
+    // Resolve hidden_columns - accepts int indices OR str names.
+    let parsed_hidden_columns = if let Some(hc) = hidden_columns {
+        resolve_column_list_to_indices(&hc, &field_names)?
+    } else {
+        std::collections::HashSet::new()
+    };
 
     // Parse column_formats
-    let parsed_column_formats = column_formats.map(|cf| {
-        cf.into_iter()
-            .filter_map(|(k, v)| parse_number_format(&v).map(|fmt| (k, fmt)))
-            .collect()
-    });
-
     // Parse merge_cells
     let parsed_merge_cells = merge_cells.unwrap_or_default().into_iter().map(|(sr, sc, er, ec)| {
         MergeRange { start_row: sr, start_col: sc, end_row: er, end_col: ec }
@@ -744,7 +885,7 @@ fn write_sheet_arrow_to_bytes(
         zoom_scale,
         tab_color,
         default_row_height,
-        hidden_columns: hidden_columns.map(|v| v.into_iter().collect()).unwrap_or_default(),
+        hidden_columns: parsed_hidden_columns,
         hidden_rows: hidden_rows.map(|v| v.into_iter().collect()).unwrap_or_default(),
         right_to_left,
         data_start_row,
@@ -797,6 +938,7 @@ fn write_sheets_arrow_to_bytes(
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     format!("Failed to read Arrow data: {}", e)
                 ))?;
+            let batches = decode_dictionary_columns(batches)?;
 
             let auto_filter = sheet_dict.get_item("auto_filter")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
             let freeze_rows = sheet_dict.get_item("freeze_rows")?.map(|v| v.extract()).unwrap_or(Ok(0))?;
@@ -806,43 +948,64 @@ fn write_sheets_arrow_to_bytes(
             let write_header_row = sheet_dict.get_item("write_header_row")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
             let data_start_row = sheet_dict.get_item("data_start_row")?.map(|v| v.extract()).unwrap_or(Ok(0))?;
 
-            let column_widths: Option<HashMap<String, Bound<PyAny>>> = sheet_dict.get_item("column_widths")?.and_then(|v| v.extract().ok());
-            let column_formats: Option<HashMap<String, String>> = sheet_dict.get_item("column_formats")?.and_then(|v| v.extract().ok());
+            let column_widths: Option<Bound<PyDict>> = sheet_dict.get_item("column_widths")?.and_then(|v| v.cast_into::<PyDict>().ok());
+            let column_formats: Option<Bound<PyDict>> = sheet_dict.get_item("column_formats")?.and_then(|v| v.cast_into::<PyDict>().ok());
+            let hidden_columns: Option<Vec<Bound<PyAny>>> = sheet_dict.get_item("hidden_columns")?.and_then(|v| v.extract().ok());
 
-            // Parse column_widths - supports float, "auto", or "150px"
-            let parsed_column_widths = column_widths.map(|cw| {
-                cw.into_iter()
-                    .filter_map(|(k, v)| {
-                        let width = if let Ok(s) = v.extract::<String>() {
-                            if s.to_lowercase() == "auto" {
-                                ColumnWidth::Auto
-                            } else if s.ends_with("px") {
-                                let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
-                                ColumnWidth::Pixels(px)
-                            } else {
-                                // Try parsing as number string
-                                ColumnWidth::Characters(s.parse().unwrap_or(8.43))
-                            }
-                        } else if let Ok(f) = v.extract::<f64>() {
-                            ColumnWidth::Characters(f)
-                        } else if let Ok(i) = v.extract::<i64>() {
-                            ColumnWidth::Characters(i as f64)
+            // Column names for int-or-name reference resolution.
+            let field_names = schema_field_names(&batches);
+
+            // Parse column_widths - keys accept int index OR str name.
+            let parsed_column_widths = if let Some(cw) = column_widths {
+                let resolved = resolve_column_dict_to_names(&cw, &field_names)?;
+                let mut map: HashMap<String, ColumnWidth> = HashMap::with_capacity(resolved.len());
+                for (col_name, v) in resolved {
+                    let width = if let Ok(s) = v.extract::<String>() {
+                        if s.to_lowercase() == "auto" {
+                            ColumnWidth::Auto
+                        } else if s.ends_with("px") {
+                            let px: f64 = s.trim_end_matches("px").parse().unwrap_or(50.0);
+                            ColumnWidth::Pixels(px)
                         } else {
-                            return None;
-                        };
-                        Some((k, width))
-                    })
-                    .collect()
-            });
+                            ColumnWidth::Characters(s.parse().unwrap_or(8.43))
+                        }
+                    } else if let Ok(f) = v.extract::<f64>() {
+                        ColumnWidth::Characters(f)
+                    } else if let Ok(i) = v.extract::<i64>() {
+                        ColumnWidth::Characters(i as f64)
+                    } else {
+                        continue;
+                    };
+                    map.insert(col_name, width);
+                }
+                Some(map)
+            } else {
+                None
+            };
 
-            // Parse column_formats
-            let parsed_column_formats = column_formats.map(|cf| {
-                cf.into_iter()
-                    .filter_map(|(k, v)| parse_number_format(&v).map(|fmt| (k, fmt)))
-                    .collect()
-            });
+            // Parse column_formats - keys accept int index OR str name.
+            let parsed_column_formats = if let Some(cf) = column_formats {
+                let resolved = resolve_column_dict_to_names(&cf, &field_names)?;
+                let mut map: HashMap<String, NumberFormat> = HashMap::with_capacity(resolved.len());
+                for (col_name, v) in resolved {
+                    let fmt_str: String = v.extract()?;
+                    if let Some(fmt) = parse_number_format(&fmt_str) {
+                        map.insert(col_name, fmt);
+                    }
+                }
+                Some(map)
+            } else {
+                None
+            };
 
-            let config = StyleConfig {
+            // Resolve hidden_columns - accepts int indices OR str names.
+            let parsed_hidden_columns = if let Some(hc) = hidden_columns {
+                resolve_column_list_to_indices(&hc, &field_names)?
+            } else {
+                std::collections::HashSet::new()
+            };
+
+            let mut config = StyleConfig {
                 auto_filter,
                 freeze_rows,
                 freeze_cols,
@@ -865,13 +1028,161 @@ fn write_sheets_arrow_to_bytes(
                 zoom_scale: None,
                 tab_color: None,
                 default_row_height: None,
-                hidden_columns: std::collections::HashSet::new(),
+                hidden_columns: parsed_hidden_columns,
                 hidden_rows: std::collections::HashSet::new(),
                 right_to_left: false,
                 data_start_row,
                 header_content: vec![],
                 cond_format_dxf_ids: HashMap::new(),
             };
+
+            // Parse the full per-sheet feature set. Previously this bytes path
+            // hardcoded all of these to empty, so multi-sheet in-memory writes
+            // silently dropped merges, validations, hyperlinks, row heights,
+            // cell styles, formulas, conditional formats, tables, charts, images
+            // and appearance options -- even though the file-based multi-sheet
+            // API (write_sheets_arrow) honored them. Mirror that parsing here so
+            // the two multi-sheet APIs are at feature parity.
+
+            // Merge cells
+            if let Some(merge) = sheet_dict.get_item("merge_cells")? {
+                let merge_list = merge.cast::<PyList>()?;
+                for item in merge_list.iter() {
+                    if let Ok(tuple) = item.extract::<(usize, usize, usize, usize)>() {
+                        config.merge_cells.push(MergeRange {
+                            start_row: tuple.0, start_col: tuple.1,
+                            end_row: tuple.2, end_col: tuple.3,
+                        });
+                    }
+                }
+            }
+
+            // Data validations
+            if let Some(validations) = sheet_dict.get_item("data_validations")? {
+                let validations_list = validations.cast::<PyList>()?;
+                for val_dict in validations_list.iter() {
+                    if let Ok(val_dict) = val_dict.cast::<PyDict>() {
+                        if let Ok(validation) = extract_data_validation(&val_dict) {
+                            config.data_validations.push(validation);
+                        }
+                    }
+                }
+            }
+
+            // Hyperlinks
+            if let Some(hyperlinks) = sheet_dict.get_item("hyperlinks")? {
+                let hyperlinks_list = hyperlinks.cast::<PyList>()?;
+                for item in hyperlinks_list.iter() {
+                    if let Ok((row, col, url, display)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                        config.hyperlinks.push(Hyperlink { row, col, url, display });
+                    }
+                }
+            }
+
+            // Row heights
+            if let Some(heights) = sheet_dict.get_item("row_heights")? {
+                let heights_dict = heights.cast::<PyDict>()?;
+                let mut row_heights = HashMap::new();
+                for (key, value) in heights_dict.iter() {
+                    let row: usize = key.extract()?;
+                    let height: f64 = value.extract()?;
+                    row_heights.insert(row, height);
+                }
+                config.row_heights = Some(row_heights);
+            }
+
+            // Cell styles
+            if let Some(styles) = sheet_dict.get_item("cell_styles")? {
+                let styles_list = styles.cast::<PyList>()?;
+                for style_dict in styles_list.iter() {
+                    if let Ok(style_dict) = style_dict.cast::<PyDict>() {
+                        if let Ok(cell_style) = extract_cell_style(&style_dict) {
+                            config.cell_styles.push(cell_style);
+                        }
+                    }
+                }
+            }
+
+            // Formulas
+            if let Some(formulas) = sheet_dict.get_item("formulas")? {
+                let formulas_list = formulas.cast::<PyList>()?;
+                for item in formulas_list.iter() {
+                    if let Ok((row, col, formula, cached_value)) = item.extract::<(usize, usize, String, Option<String>)>() {
+                        config.formulas.push(Formula { row, col, formula, cached_value });
+                    }
+                }
+            }
+
+            // Conditional formats
+            if let Some(cond_formats) = sheet_dict.get_item("conditional_formats")? {
+                let cond_list = cond_formats.cast::<PyList>()?;
+                for cond_dict in cond_list.iter() {
+                    if let Ok(cond_dict) = cond_dict.cast::<PyDict>() {
+                        if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                            config.conditional_formats.push(cond_format);
+                        }
+                    }
+                }
+            }
+
+            // Tables
+            if let Some(tables_vec) = sheet_dict.get_item("tables")? {
+                let tables_list = tables_vec.cast::<PyList>()?;
+                for table_dict in tables_list.iter() {
+                    if let Ok(table_dict) = table_dict.cast::<PyDict>() {
+                        if let Ok(table) = extract_table(&table_dict) {
+                            config.tables.push(table);
+                        }
+                    }
+                }
+            }
+
+            // Charts
+            if let Some(charts_vec) = sheet_dict.get_item("charts")? {
+                let charts_list = charts_vec.cast::<PyList>()?;
+                for chart_dict in charts_list.iter() {
+                    if let Ok(chart_dict) = chart_dict.cast::<PyDict>() {
+                        if let Ok(chart) = extract_chart(&chart_dict) {
+                            config.charts.push(chart);
+                        }
+                    }
+                }
+            }
+
+            // Images
+            if let Some(images_vec) = sheet_dict.get_item("images")? {
+                let images_list = images_vec.cast::<PyList>()?;
+                for image_dict in images_list.iter() {
+                    if let Ok(image_dict) = image_dict.cast::<PyDict>() {
+                        if let Ok(image) = extract_image(&image_dict) {
+                            config.images.push(image);
+                        }
+                    }
+                }
+            }
+
+            // Appearance options
+            if let Some(val) = sheet_dict.get_item("gridlines_visible")?.and_then(|v| v.extract().ok()) {
+                config.gridlines_visible = val;
+            }
+            if let Some(val) = sheet_dict.get_item("zoom_scale")?.and_then(|v| v.extract().ok()) {
+                config.zoom_scale = Some(val);
+            }
+            if let Some(val) = sheet_dict.get_item("tab_color")?.and_then(|v| v.extract().ok()) {
+                config.tab_color = Some(val);
+            }
+            if let Some(val) = sheet_dict.get_item("default_row_height")?.and_then(|v| v.extract().ok()) {
+                config.default_row_height = Some(val);
+            }
+            // hidden_rows: list[int] extracts to Vec<usize>, not HashSet<usize>
+            // directly -- extracting straight to the set fails silently. Collect
+            // via Vec, matching the single-sheet path.
+            if let Some(val) = sheet_dict.get_item("hidden_rows")?.and_then(|v| v.extract::<Vec<usize>>().ok()) {
+                config.hidden_rows = val.into_iter().collect();
+            }
+            if let Some(val) = sheet_dict.get_item("right_to_left")?.and_then(|v| v.extract().ok()) {
+                config.right_to_left = val;
+            }
 
             Ok((batches, name, config))
         })
@@ -894,6 +1205,136 @@ fn write_sheets_arrow_to_bytes(
 
 // ============================================================================
 // Helper functions - Extraction from Python
+// ============================================================================
+
+/// Resolve a column reference that may be either an integer index or a string
+/// name into a validated 0-based column index.
+///
+/// This is the single choke point that lets every column-referencing option
+/// accept `int | str` uniformly. Both failure modes raise a clear, catchable
+/// Python exception rather than silently mis-targeting a column:
+///   * an unknown name         -> ValueError listing the valid names
+///   * an out-of-range index   -> IndexError naming the bound
+///
+/// Resolution happens once, at the Python boundary, so the Rust core stays
+/// index-keyed and the hot path is unaffected.
+/// Render column names as a Python list literal for error messages, e.g.
+/// `["Apple", "Banana"]`. Double quotes inside a name are backslash-escaped so
+/// the output stays a valid-looking Python list even for unusual names.
+fn format_column_list(field_names: &[String]) -> String {
+    let mut s = String::from("[");
+    for (i, name) in field_names.iter().enumerate() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        s.push('"');
+        for ch in name.chars() {
+            if ch == '"' || ch == '\\' {
+                s.push('\\');
+            }
+            s.push(ch);
+        }
+        s.push('"');
+    }
+    s.push(']');
+    s
+}
+
+fn resolve_column_ref(
+    key: &Bound<PyAny>,
+    field_names: &[String],
+) -> PyResult<usize> {
+    // String name -> look up its position by EXACT match. Column names are
+    // matched exactly (case-sensitive): if the caller's spelling doesn't match a
+    // real column it is almost always a genuine mistake (typo / wrong name), so
+    // we hard-error and print the available columns as a Python list literal
+    // (e.g. ["Apple", "Banana"]) rather than silently resolving to a near-match.
+    if let Ok(name) = key.extract::<String>() {
+        if let Some(pos) = field_names.iter().position(|n| n == &name) {
+            return Ok(pos);
+        }
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "No column named '{}' found. Available columns are: {}",
+            name,
+            format_column_list(field_names)
+        )));
+    }
+
+    // Integer index -> bounds-check it. (bool is a subclass of int in Python, so
+    // reject it explicitly to avoid True/False silently meaning column 1/0.)
+    if key.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Column reference must be an int index or str name, not bool",
+        ));
+    }
+    if let Ok(idx) = key.extract::<i64>() {
+        if idx < 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Column index {} is negative",
+                idx
+            )));
+        }
+        let idx = idx as usize;
+        if idx >= field_names.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Column index {} is out of range for a sheet with {} columns (valid 0..{})",
+                idx,
+                field_names.len(),
+                field_names.len().saturating_sub(1)
+            )));
+        }
+        return Ok(idx);
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "Column reference must be an int index or a str column name",
+    ))
+}
+
+/// Extract the ordered column names from the first RecordBatch's schema.
+fn schema_field_names(batches: &[RecordBatch]) -> Vec<String> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    batches[0]
+        .schema()
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect()
+}
+
+/// Convert a Python dict whose keys are column references (int index OR str
+/// name) into a name-keyed map, validating every key against the schema. Used
+/// for `column_widths` and `column_formats`, whose Rust core is name-keyed.
+/// Values are passed through untouched as `Bound<PyAny>` for the caller to parse.
+fn resolve_column_dict_to_names<'py>(
+    dict: &Bound<'py, PyDict>,
+    field_names: &[String],
+) -> PyResult<Vec<(String, Bound<'py, PyAny>)>> {
+    let mut out = Vec::with_capacity(dict.len());
+    for (key, value) in dict.iter() {
+        let idx = resolve_column_ref(&key, field_names)?;
+        out.push((field_names[idx].clone(), value));
+    }
+    Ok(out)
+}
+
+/// Resolve a list of column references (int index OR str name) into a set of
+/// validated 0-based indices. Used for index-keyed options like
+/// `hidden_columns`.
+fn resolve_column_list_to_indices(
+    refs: &[Bound<PyAny>],
+    field_names: &[String],
+) -> PyResult<std::collections::HashSet<usize>> {
+    let mut out = std::collections::HashSet::with_capacity(refs.len());
+    for r in refs {
+        out.insert(resolve_column_ref(r, field_names)?);
+    }
+    Ok(out)
+}
+
+// Helper functions - Extraction from Python (originals)
 // ============================================================================
 
 fn extract_sheet_data(
@@ -959,31 +1400,47 @@ fn parse_number_format(s: &str) -> Option<NumberFormat> {
         }
     }
 }
+/// Fetch a REQUIRED key from a config dict. `PyDict::get_item` returns
+/// `Ok(None)` when the key is absent; the old code did `.unwrap()` on that,
+/// which panics ("unwrap on None") and aborts the whole Python process instead
+/// of raising a catchable exception. This helper returns a clear `KeyError`-ish
+/// `PyValueError` naming the missing key, so a user who forgets or misspells a
+/// field gets a helpful Python exception they can catch -- not a hard crash.
+fn req_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+    match dict.get_item(key)? {
+        Some(v) => Ok(v),
+        None => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "missing required key '{}'",
+            key
+        ))),
+    }
+}
+
 fn extract_data_validation(dict: &Bound<PyDict>) -> PyResult<DataValidation> {
-    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
-    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
-    let val_type: String = dict.get_item("type")?.unwrap().extract()?;
+    let start_row: usize = req_item(dict, "start_row")?.extract()?;
+    let start_col: usize = req_item(dict, "start_col")?.extract()?;
+    let end_row: usize = req_item(dict, "end_row")?.extract()?;
+    let end_col: usize = req_item(dict, "end_col")?.extract()?;
+    let val_type: String = req_item(dict, "type")?.extract()?;
     
     let validation_type = match val_type.as_str() {
         "list" => {
-            let items: Vec<String> = dict.get_item("items")?.unwrap().extract()?;
+            let items: Vec<String> = req_item(dict, "items")?.extract()?;
             ValidationType::List(items)
         }
         "whole_number" => {
-            let min: i64 = dict.get_item("min")?.unwrap().extract()?;
-            let max: i64 = dict.get_item("max")?.unwrap().extract()?;
+            let min: i64 = req_item(dict, "min")?.extract()?;
+            let max: i64 = req_item(dict, "max")?.extract()?;
             ValidationType::WholeNumber { min, max }
         }
         "decimal" => {
-            let min: f64 = dict.get_item("min")?.unwrap().extract()?;
-            let max: f64 = dict.get_item("max")?.unwrap().extract()?;
+            let min: f64 = req_item(dict, "min")?.extract()?;
+            let max: f64 = req_item(dict, "max")?.extract()?;
             ValidationType::Decimal { min, max }
         }
         "text_length" => {
-            let min: usize = dict.get_item("min")?.unwrap().extract()?;
-            let max: usize = dict.get_item("max")?.unwrap().extract()?;
+            let min: usize = req_item(dict, "min")?.extract()?;
+            let max: usize = req_item(dict, "max")?.extract()?;
             ValidationType::TextLength { min, max }
         }
         _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid validation type")),
@@ -1047,7 +1504,7 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
         let border_dict = border_dict.cast::<PyDict>()?;
         
         let parse_side = |side_dict: &Bound<PyDict>| -> PyResult<BorderSide> {
-            let style: String = side_dict.get_item("style")?.unwrap().extract()?;
+            let style: String = req_item(side_dict, "style")?.extract()?;
             Ok(BorderSide {
                 style: match style.as_str() {
                     "medium" => BorderLineStyle::Medium,
@@ -1152,25 +1609,25 @@ fn extract_cell_style_inner(dict: &Bound<PyDict>) -> PyResult<CellStyle> {
 }
 
 fn extract_cell_style(dict: &Bound<PyDict>) -> PyResult<CellStyleMap> {
-    let row: usize = dict.get_item("row")?.unwrap().extract()?;
-    let col: usize = dict.get_item("col")?.unwrap().extract()?;
+    let row: usize = req_item(dict, "row")?.extract()?;
+    let col: usize = req_item(dict, "col")?.extract()?;
     let style = extract_cell_style_inner(dict)?;
     
     Ok(CellStyleMap { row, col, style })
 }
 
 fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalFormat> {
-    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
-    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-    let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-    let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
-    let rule_type: String = dict.get_item("rule_type")?.unwrap().extract()?;
+    let start_row: usize = req_item(dict, "start_row")?.extract()?;
+    let start_col: usize = req_item(dict, "start_col")?.extract()?;
+    let end_row: usize = req_item(dict, "end_row")?.extract()?;
+    let end_col: usize = req_item(dict, "end_col")?.extract()?;
+    let rule_type: String = req_item(dict, "rule_type")?.extract()?;
     let priority: u32 = dict.get_item("priority")?.map(|v| v.extract()).unwrap_or(Ok(1))?;
     
     let rule = match rule_type.as_str() {
         "cell_value" => {
-            let operator: String = dict.get_item("operator")?.unwrap().extract()?;
-            let value: String = dict.get_item("value")?.unwrap().extract()?;
+            let operator: String = req_item(dict, "operator")?.extract()?;
+            let value: String = req_item(dict, "value")?.extract()?;
             
             let op = match operator.as_str() {
                 "greater_than" => ComparisonOperator::GreaterThan,
@@ -1186,20 +1643,20 @@ fn extract_conditional_format(dict: &Bound<PyDict>) -> PyResult<ConditionalForma
             ConditionalRule::CellValue { operator: op, value }
         }
         "color_scale" => {
-            let min_color: String = dict.get_item("min_color")?.unwrap().extract()?;
-            let max_color: String = dict.get_item("max_color")?.unwrap().extract()?;
+            let min_color: String = req_item(dict, "min_color")?.extract()?;
+            let max_color: String = req_item(dict, "max_color")?.extract()?;
             let mid_color: Option<String> = dict.get_item("mid_color")?.and_then(|v| v.extract().ok());
             
             ConditionalRule::ColorScale { min_color, max_color, mid_color }
         }
         "data_bar" => {
-            let color: String = dict.get_item("color")?.unwrap().extract()?;
+            let color: String = req_item(dict, "color")?.extract()?;
             let show_value: bool = dict.get_item("show_value")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
             
             ConditionalRule::DataBar { color, show_value }
         }
         "top10" => {
-            let rank: u32 = dict.get_item("rank")?.unwrap().extract()?;
+            let rank: u32 = req_item(dict, "rank")?.extract()?;
             let bottom: bool = dict.get_item("bottom")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
             
             ConditionalRule::Top10 { rank, bottom }
@@ -1283,9 +1740,9 @@ fn jetxl(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // }
 
 fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
-    let name: String = dict.get_item("name")?.unwrap().extract()?;
-    let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
-    let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
+    let name: String = req_item(dict, "name")?.extract()?;
+    let start_row: usize = req_item(dict, "start_row")?.extract()?;
+    let start_col: usize = req_item(dict, "start_col")?.extract()?;
     
     // Make end_row and end_col optional - extract as Option<i64> to allow None or -1
     let end_row_opt: Option<i64> = dict.get_item("end_row")?.and_then(|v| v.extract().ok());
@@ -1314,7 +1771,7 @@ fn extract_table(dict: &Bound<PyDict>) -> PyResult<ExcelTable> {
 }
 
 fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
-    let chart_type_str: String = dict.get_item("chart_type")?.unwrap().extract()?;
+    let chart_type_str: String = req_item(dict, "chart_type")?.extract()?;
     let chart_type = match chart_type_str.as_str() {
         "column" => ChartType::Column,
         "bar" => ChartType::Bar,
@@ -1325,22 +1782,51 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
         _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid chart type")),
     };
     
-    // Handle both old API (start_row/start_col) and new API (data_range tuple)
+    // Read an optional usize field. `get_item` returns None when the key is
+    // absent, so we must NOT unwrap() it -- doing so panics (unwrap on None),
+    // which aborts the whole Python process instead of raising a catchable
+    // exception. This helper returns None for a missing key and propagates a
+    // real error only if a present value fails to extract as usize.
+    let opt_usize = |key: &str| -> PyResult<Option<usize>> {
+        match dict.get_item(key)? {
+            Some(v) => Ok(Some(v.extract::<usize>()?)),
+            None => Ok(None),
+        }
+    };
+
+    // Handle both old API (start_row/start_col) and new API (data_range tuple).
+    // data_range is required for a chart; if neither it nor the individual
+    // start_/end_ keys are supplied, return a clear error rather than panicking.
     let data_range = if let Some(range) = dict.get_item("data_range")? {
         range.extract::<(usize, usize, usize, usize)>()?
     } else {
-        let start_row: usize = dict.get_item("start_row")?.unwrap().extract()?;
-        let start_col: usize = dict.get_item("start_col")?.unwrap().extract()?;
-        let end_row: usize = dict.get_item("end_row")?.unwrap().extract()?;
-        let end_col: usize = dict.get_item("end_col")?.unwrap().extract()?;
-        (start_row, start_col, end_row, end_col)
+        match (
+            opt_usize("start_row")?, opt_usize("start_col")?,
+            opt_usize("end_row")?, opt_usize("end_col")?,
+        ) {
+            (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "chart requires either 'data_range' (start_row, start_col, \
+                     end_row, end_col) or all four of start_row/start_col/\
+                     end_row/end_col",
+                ));
+            }
+        }
     };
-    
-    let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
-    let from_row: usize = dict.get_item("from_row")?.unwrap().extract()?;
-    let to_col: usize = dict.get_item("to_col")?.unwrap().extract()?;
-    let to_row: usize = dict.get_item("to_row")?.unwrap().extract()?;
-    
+
+    // Chart anchor position is OPTIONAL. When from_/to_ keys are omitted (the
+    // common case -- they're not part of the documented ExcelChart shape),
+    // default to anchoring the chart just to the right of the data range so it
+    // doesn't overlap the data. Roughly 8 columns wide by 15 rows tall.
+    let (dr_start_row, _dr_start_col, _dr_end_row, dr_end_col) = data_range;
+    let default_from_col = dr_end_col + 2;
+    let default_from_row = dr_start_row.saturating_sub(1);
+    let from_col = opt_usize("from_col")?.unwrap_or(default_from_col);
+    let from_row = opt_usize("from_row")?.unwrap_or(default_from_row);
+    let to_col = opt_usize("to_col")?.unwrap_or(from_col + 8);
+    let to_row = opt_usize("to_row")?.unwrap_or(from_row + 15);
+
     let mut chart = ExcelChart::new(
         chart_type,
         data_range,
@@ -1351,6 +1837,18 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
     chart.title = dict.get_item("title")?.and_then(|v| v.extract().ok());
     chart.category_col = dict.get_item("category_col")?.and_then(|v| v.extract().ok());
     chart.show_legend = dict.get_item("show_legend")?.map(|v| v.extract()).unwrap_or(Ok(true))?;
+    // legend_position is documented ("right"/"left"/"top"/"bottom"/"none") and
+    // fully supported by the chart struct + XML, but was never read from the
+    // user's dict -- so it silently always rendered on the right. Wire it up.
+    if let Some(pos) = dict.get_item("legend_position")?.and_then(|v| v.extract::<String>().ok()) {
+        chart.legend_position = match pos.to_lowercase().as_str() {
+            "left" => LegendPosition::Left,
+            "top" => LegendPosition::Top,
+            "bottom" => LegendPosition::Bottom,
+            "none" => LegendPosition::None,
+            _ => LegendPosition::Right,
+        };
+    }
     chart.x_axis_title = dict.get_item("x_axis_title")?.and_then(|v| v.extract().ok());
     chart.y_axis_title = dict.get_item("y_axis_title")?.and_then(|v| v.extract().ok());
     chart.stacked = dict.get_item("stacked")?.map(|v| v.extract()).unwrap_or(Ok(false))?;
@@ -1385,10 +1883,10 @@ fn extract_chart(dict: &Bound<PyDict>) -> PyResult<ExcelChart> {
 
 
 fn extract_image(dict: &Bound<PyDict>) -> PyResult<ExcelImage> {
-    let from_col: usize = dict.get_item("from_col")?.unwrap().extract()?;
-    let from_row: usize = dict.get_item("from_row")?.unwrap().extract()?;
-    let to_col: usize = dict.get_item("to_col")?.unwrap().extract()?;
-    let to_row: usize = dict.get_item("to_row")?.unwrap().extract()?;
+    let from_col: usize = req_item(dict, "from_col")?.extract()?;
+    let from_row: usize = req_item(dict, "from_row")?.extract()?;
+    let to_col: usize = req_item(dict, "to_col")?.extract()?;
+    let to_row: usize = req_item(dict, "to_row")?.extract()?;
     
     let position = ImagePosition { from_col, from_row, to_col, to_row };
     
@@ -1398,7 +1896,7 @@ fn extract_image(dict: &Bound<PyDict>) -> PyResult<ExcelImage> {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to read image: {}", e)))?
     } else if let Some(data) = dict.get_item("data")? {
         let bytes: Vec<u8> = data.extract()?;
-        let ext: String = dict.get_item("extension")?.unwrap().extract()?;
+        let ext: String = req_item(dict, "extension")?.extract()?;
         ExcelImage::from_bytes(bytes, ext, position)
     } else {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Image must have 'path' or 'data'"));
