@@ -22,16 +22,26 @@ impl CellValue {
             return Ok(CellValue::String(s.to_string()));
         }
 
+        // IMPORTANT: check bool BEFORE int. In Python `bool` is a subclass of
+        // `int`, so `True.extract::<i64>()` succeeds and would silently turn a
+        // boolean into the number 1/0 (rendered as a plain 1, not TRUE/FALSE).
+        // Testing bool first preserves the user's actual type.
+        if let Ok(b) = value.extract::<bool>() {
+            return Ok(CellValue::Bool(b));
+        }
+
         if let Ok(i) = value.extract::<i64>() {
             return Ok(CellValue::Number(i as f64));
         }
 
         if let Ok(f) = value.extract::<f64>() {
+            // NaN and +/-Inf are not valid OOXML numeric cell values; writing
+            // <v>NaN</v> or <v>inf</v> makes the whole workbook unreadable. The
+            // Arrow path already maps these to empty cells, so match that here.
+            if !f.is_finite() {
+                return Ok(CellValue::Empty);
+            }
             return Ok(CellValue::Number(f));
-        }
-
-        if let Ok(b) = value.extract::<bool>() {
-            return Ok(CellValue::Bool(b));
         }
 
         if let Ok(dt) = value.cast::<PyDateTime>() {
