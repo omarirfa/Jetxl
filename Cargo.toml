@@ -11,6 +11,16 @@ readme = "README.md"
 name = "jetxl"
 crate-type = ["cdylib"]
 
+[features]
+# Opt-in: use libdeflate (via the `libdeflater` crate) instead of miniz_oxide
+# for DEFLATE compression in the ZIP writer. libdeflate is typically the fastest
+# DEFLATE encoder available and still produces standard DEFLATE streams, so the
+# output remains a spec-valid .xlsx. It requires a C compiler (`cc`) at build
+# time but, unlike zlib-ng, does not require cmake. The compression ratio can
+# differ slightly from miniz_oxide at a given level, so benchmark both on your
+# data. Default build uses the pure-Rust miniz_oxide backend (no C toolchain).
+libdeflate = ["dep:libdeflater"]
+
 [dependencies]
 pyo3 = { version = "0.28", features = ["chrono", "chrono-tz","extension-module"] }
 pyo3-arrow = "0.17"
@@ -18,7 +28,6 @@ arrow = "58"
 arrow-array = "58"
 arrow-schema = "58"
 arrow-data = "58"
-mtzip = { version = "4.0.3", features = ["rayon"] }
 chrono = "0.4"
 zmij = "1.0"
 itoa = "1.0"
@@ -28,6 +37,10 @@ base64 = "0.22"
 rand = "0.9"
 rayon = "1.10"
 rustc-hash = "2.0"
+mimalloc = { version = "0.1", default-features = false }
+miniz_oxide = "0.8"
+crc32fast = "1.4"
+libdeflater = { version = "1.24", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
 
 [profile.release]
@@ -36,4 +49,3 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-

@@ -2,6 +2,45 @@ use arrow_array::Array;
 use arrow_schema::DataType;
 use std::collections::{HashMap, HashSet};
 
+/// Like `normalize_color`, but returns a 6-digit RRGGBB string (no alpha) for
+/// contexts that use DrawingML `<a:srgbClr val="...">`, which requires exactly
+/// 6 hex digits. An 8-digit ARGB input has its alpha dropped; a bad value
+/// returns None so the caller can omit it rather than corrupt the chart.
+pub fn normalize_color_rgb(input: &str) -> Option<String> {
+    let s = input.strip_prefix('#').unwrap_or(input);
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match s.len() {
+        6 => Some(s.to_ascii_uppercase()),
+        8 => Some(s[2..].to_ascii_uppercase()), // drop AA, keep RRGGBB
+        _ => None,
+    }
+}
+
+/// Normalize a user-supplied color into a valid 8-digit ARGB hex string.
+///
+/// Excel's `rgb` attribute must be exactly 8 hex digits (AARRGGBB). Passing an
+/// invalid value like "red", "#FF0000", or "F00" straight through produced
+/// `<color rgb="red"/>`, which makes the ENTIRE workbook unopenable ("could not
+/// read stylesheet"). This accepts the forms users actually type:
+///   - "FFRRGGBB" (8 hex)         -> as-is (upper-cased)
+///   - "RRGGBB"   (6 hex)         -> prefixed with "FF" (opaque)
+///   - "#RRGGBB" / "#FFRRGGBB"    -> leading '#' stripped, then as above
+/// Anything else (named colors, 3-digit shorthand, bad length, non-hex) returns
+/// None, and the caller omits the color rather than corrupting the file.
+pub fn normalize_color(input: &str) -> Option<String> {
+    let s = input.strip_prefix('#').unwrap_or(input);
+    if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match s.len() {
+        8 => Some(s.to_ascii_uppercase()),
+        6 => Some(format!("FF{}", s.to_ascii_uppercase())),
+        _ => None,
+    }
+}
+
 fn get_builtin_format_name(code: &str) -> Option<&'static str> {
     match code.to_lowercase().as_str() {
         "0" => Some("integer"),
@@ -86,6 +125,7 @@ impl NumberFormat {
         }
     }
     
+    #[allow(dead_code)]  // public predicate, part of NumberFormat's API
     pub fn is_custom(&self) -> bool {
         matches!(self, NumberFormat::Custom(_))
     }
@@ -592,7 +632,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             xml.push_str(&format!("<sz val=\"{}\"/>", size));
         }
         if let Some(ref color) = font.color {
-            xml.push_str(&format!("<color rgb=\"{}\"/>", color));
+            if let Some(c) = normalize_color(color) { xml.push_str(&format!("<color rgb=\"{}\"/>", c)); }
         }
         if let Some(ref name) = font.name {
             xml.push_str(&format!("<name val=\"{}\"/>", name));
@@ -611,10 +651,10 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             PatternType::Solid => {
                 xml.push_str("<patternFill patternType=\"solid\">");
                 if let Some(ref fg) = fill.fg_color {
-                    xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
+                    if let Some(c) = normalize_color(fg) { xml.push_str(&format!("<fgColor rgb=\"{}\"/>", c)); }
                 }
                 if let Some(ref bg) = fill.bg_color {
-                    xml.push_str(&format!("<bgColor rgb=\"{}\"/>", bg));
+                    if let Some(c) = normalize_color(bg) { xml.push_str(&format!("<bgColor rgb=\"{}\"/>", c)); }
                 }
                 xml.push_str("</patternFill>");
             }
@@ -644,16 +684,22 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
     // Cell XFs
     xml.push_str(&format!("<cellXfs count=\"{}\">\n", registry.cell_xfs.len()));
     for xf in &registry.cell_xfs {
-        xml.push_str(&format!("  <xf numFmtId=\"{}\" fontId=\"{}\" fillId=\"{}\" borderId=\"0\"", 
-            xf.num_fmt_id, xf.font_id, xf.fill_id));
+        // NOTE: borderId must reflect xf.border_id, not a hardcoded 0. Previously
+        // this always emitted borderId="0", so any custom cell-style border was
+        // registered in <borders> but never referenced by a cell's xf -- borders
+        // silently never rendered. Emit the real id and applyBorder when set.
+        xml.push_str(&format!("  <xf numFmtId=\"{}\" fontId=\"{}\" fillId=\"{}\" borderId=\"{}\"", 
+            xf.num_fmt_id, xf.font_id, xf.fill_id, xf.border_id));
         
         let apply_font = xf.font_id > 0;
         let apply_fill = xf.fill_id > 0;
+        let apply_border = xf.border_id > 0;
         let apply_num_fmt = xf.num_fmt_id > 0;
         let apply_alignment = xf.alignment.is_some();
         
         if apply_font { xml.push_str(" applyFont=\"1\""); }
         if apply_fill { xml.push_str(" applyFill=\"1\""); }
+        if apply_border { xml.push_str(" applyBorder=\"1\""); }
         if apply_num_fmt { xml.push_str(" applyNumberFormat=\"1\""); }
         if apply_alignment { xml.push_str(" applyAlignment=\"1\""); }
         
@@ -679,7 +725,23 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
                 xml.push_str(" wrapText=\"1\"");
             }
             if let Some(rotation) = align.text_rotation {
-                xml.push_str(&format!(" textRotation=\"{}\"", rotation));
+                // Excel encodes textRotation as 0..=90 (counter-clockwise) or
+                // 91..=180 (== clockwise 1..=90 degrees), plus 255 for vertical
+                // text. A raw negative value (e.g. -90, the natural way to say
+                // "90 clockwise") or a value > 180 produced invalid XML that made
+                // the whole workbook unreadable. Map negatives to the clockwise
+                // range and clamp the rest into the legal band.
+                let normalized: i32 = if rotation == 255 {
+                    255
+                } else if rotation < 0 {
+                    // -1..=-90 clockwise -> 91..=180
+                    90 + (-rotation).min(90)
+                } else if rotation > 180 {
+                    180
+                } else {
+                    rotation
+                };
+                xml.push_str(&format!(" textRotation=\"{}\"", normalized));
             }
             xml.push_str("/>");
             xml.push_str("</xf>\n");
@@ -705,7 +767,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
             if font.italic { xml.push_str("<i/>"); }
             if font.underline { xml.push_str("<u/>"); }
             if let Some(ref color) = font.color {
-                xml.push_str(&format!("<color rgb=\"{}\"/>", color));
+                if let Some(c) = normalize_color(color) { xml.push_str(&format!("<color rgb=\"{}\"/>", c)); }
             }
             xml.push_str("</font>");
         }
@@ -718,13 +780,13 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
         if let Some(ref fill) = dxf.fill {
             xml.push_str("<fill><patternFill patternType=\"solid\">");
             if let Some(ref fg) = fill.fg_color {
-                xml.push_str(&format!("<fgColor rgb=\"{}\"/>", fg));
+                if let Some(c) = normalize_color(fg) { xml.push_str(&format!("<fgColor rgb=\"{}\"/>", c)); }
                 if fill.bg_color.is_none() {
                     xml.push_str("<bgColor rgb=\"FFFFFFFF\"/>");
                 }
             }
             if let Some(ref bg) = fill.bg_color {
-                xml.push_str(&format!("<bgColor rgb=\"{}\"/>", bg));
+                if let Some(c) = normalize_color(bg) { xml.push_str(&format!("<bgColor rgb=\"{}\"/>", c)); }
             }
             xml.push_str("</patternFill></fill>");
         }
@@ -792,7 +854,7 @@ fn write_border_side(xml: &mut String, side: &str, border: &Option<BorderSide>) 
             BorderLineStyle::Dashed => "dashed",
         }));
         if let Some(ref color) = b.color {
-            xml.push_str(&format!("<color rgb=\"{}\"/>", color));
+            if let Some(c) = normalize_color(color) { xml.push_str(&format!("<color rgb=\"{}\"/>", c)); }
         }
         xml.push_str(&format!("</{}>", side));
     } else {
@@ -881,6 +943,7 @@ pub struct ExcelImage {
     pub image_data: Vec<u8>,
     pub extension: String, // "png", "jpeg", etc.
     pub position: ImagePosition,
+    #[allow(dead_code)]  // reserved for alt-text; not yet emitted
     pub description: Option<String>,
 }
 

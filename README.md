@@ -27,7 +27,7 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 
 At the time of the test, the following library versions were used:
 - Jetxl: 0.2.5
-- Polars: 1.40.1
+- Polars: 1.42.1
 - Pandas: 3.0.3
 - Pyexcelerate: 0.13.0
 - Rustpy-xlsxwriter: 0.4.4
@@ -38,7 +38,7 @@ At the time of the test, the following library versions were used:
 ### Library comparison summary
 | Library | 1M Rows | Speedup | Throughput | Memory |
 |---------|---------|---------|------------|--------|
-| **jetxl (arrow)** | **1.85s** | **1.0x** | **523K rows/s** | **~0 MB** |
+| **jetxl (arrow)** | **0.68s** | **1.0x** | **1468K rows/s** | **~0 MB** |
 | jetxl (dict) | 3.02s | 1.6x slower | 322K rows/s | ~0 MB |
 | rustpy_xlsxwriter | 7.51s | 4.0x slower | 125K rows/s | 267.5 MB |
 | xlsxwriter | 29.16s | **15x slower** | 31K rows/s | 947.6 MB |
@@ -2685,7 +2685,8 @@ import jetxl as jet
 
 df = pl.DataFrame({
     "Name": ["Alice", "Bob"],
-    "Sales": [1000, 1500]
+    "Sales": [1000, 1500],
+    "Region": ["North", "South"]
 })
 
 # Add title rows, metadata, spacing before DataFrame
