@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.5-alpha...v0.3.0-alpha) (2026-07-10)
+
+
+### Features
+
+* performance improvement + bug fixes to conform with the openxml… ([#41](https://github.com/omarirfa/Jetxl/issues/41)) ([10b3be1](https://github.com/omarirfa/Jetxl/commit/10b3be1c985e392665dcda8daa2cb3815e71484c))
+
 ## [0.2.5-alpha](https://github.com/omarirfa/Jetxl/compare/v0.2.4-alpha...v0.2.5-alpha) (2026-05-18)
 
 
