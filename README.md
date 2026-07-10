@@ -9,15 +9,15 @@
 
 Jetxl is a high-performance library for creating Excel files from Python with native support for Arrow, Polars, and Pandas DataFrames. Built from the ground up in Rust for maximum speed and efficiency.
 
-## ✨ Features
+## Features
 
-- 🚀 **Ultra-fast**: up to 84x faster than other Python Excel libraries
-- 🔄 **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
-- 🎨 **Rich formatting**: Fonts, colors, borders, alignment, number formats
-- 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts, images
-- 🧵 **Multi-threaded**: Parallel sheet generation for multi-sheet workbooks
-- 💾 **Memory efficient**: Streaming XML generation with minimal memory overhead
-- 🐻‍❄️🐼 **Framework agnostic**: Works seamlessly with Polars, Pandas, PyArrow, and native Python dicts
+- **Ultra-fast**: up to 84x faster than other Python Excel libraries
+- **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
+- **Rich formatting**: Fonts, colors, borders, alignment, number formats
+- **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts, images
+- **Multi-threaded**: Parallel sheet generation for multi-sheet workbooks
+- **Memory efficient**: Streaming XML generation with minimal memory overhead
+- **Framework agnostic**: Works seamlessly with 🐻‍❄️ Polars, 🐼 Pandas, PyArrow, and native Python dicts
 
 
 
@@ -86,7 +86,7 @@ pip install jetxl
 
 
 > [!IMPORTANT]
-> **jetxl is an experimental xlsx writer.**
+> **Jetxl is an experimental xlsx writer.**
 >
 > - Base functionality (writing without parameters) works correctly.
 > - Using some parameters together may encounter bugs.
@@ -94,7 +94,7 @@ pip install jetxl
 
 
 
-### Using Polars (Recommended)
+### 🐻‍❄️ Using Polars (Recommended)
 
 ```python
 import polars as pl
@@ -111,7 +111,7 @@ df = pl.DataFrame({
 jet.write_sheet_arrow(df.to_arrow(), "output.xlsx")
 ```
 
-### Using Pandas
+### 🐼 Using Pandas
 
 ```python
 import pandas as pd
@@ -1717,8 +1717,6 @@ Add images (logos, charts, diagrams) to your Excel sheets with precise positioni
 
 ### Adding Images from Files
 
-### Adding Images from Files
-
 The simplest way to add images is from file paths:
 
 ```python
@@ -2150,7 +2148,7 @@ validations = [{
 jet.write_sheet_arrow(df.to_arrow(), "validation.xlsx", data_validations=validations)
 ```
 
-## 🎨 Conditional Formatting
+## 🌡️ Conditional Formatting
 
 ### Cell Value Rules
 
@@ -2292,7 +2290,7 @@ jet.write_sheet_arrow(df.to_arrow(), "data_bars.xlsx", conditional_formats=condi
 - `color` (required) - Bar fill color in ARGB hex format
 - `show_value` (optional) - Display the cell value in addition to the bar (default: `True`); set to `False` to show bars only
 
-## 📊 Multiple Sheets
+## 📑 Multiple Sheets
 
 Create multi-sheet workbooks with full independent formatting per sheet. Each sheet supports **all features** from `write_sheet_arrow()` including tables, charts, images, conditional formatting, data validation, formulas, cell styles, and more.
 
@@ -2560,7 +2558,7 @@ jet.write_sheets_arrow(sheets, "everything.xlsx", num_threads=1)
 - Style registry is shared for deduplication
 - Recommended: `num_threads = min(cpu_count, len(sheets))`
 
-## 🎨 Sheet Appearance & Layout
+## 🖥️ Sheet Appearance & Layout
 
 ### Gridlines and Zoom
 
@@ -2963,38 +2961,38 @@ except ValueError as e:
 ## 🤝 Comparison with Other Libraries
 
 ### vs xlsxwriter
-- ✅ **36x faster** (1M rows: 0.66s vs 23.84s)
-- ✅ Zero-copy DataFrame integration
-- ✅ Multi-threaded sheet generation
-- ✅ Modern Python API with type hints
-- ❌ Larger output files (less aggressive compression)
-- ❌ Fewer advanced chart customizations
+- **36x faster** (1M rows: 0.66s vs 23.84s)
+- Zero-copy DataFrame integration
+- Multi-threaded sheet generation
+- Modern Python API with type hints
+- Larger output files (less aggressive compression)
+- Fewer advanced chart customizations
 
 ### vs openpyxl
-- ✅ **64x faster** (1M rows: 0.66s vs 42.46s)
-- ✅ Native Arrow/Polars/Pandas support
-- ❌ Write-only (openpyxl supports reading)
-- ❌ Fewer cell-level features
+- **64x faster** (1M rows: 0.66s vs 42.46s)
+- Native Arrow/Polars/Pandas support
+- Write-only (openpyxl supports reading)
+- Fewer cell-level features
 
-### vs polars.write_excel
-- ✅ **40x faster** (1M rows: 0.66s vs 26.57s)
-- ✅ **~3.3x lower peak memory** (958 MB vs 3.13 GB at 1M rows)
-- ✅ More formatting options (conditional formatting, tables, charts)
-- ✅ Multi-sheet threading support
-- ❌ Requires `.to_arrow()` conversion
+### 🐻‍❄️ vs polars.write_excel
+- **40x faster** (1M rows: 0.66s vs 26.57s)
+- **~3.3x lower peak memory** (958 MB vs 3.13 GB at 1M rows)
+- More formatting options (conditional formatting, tables, charts)
+- Multi-sheet threading support
+- Requires `.to_arrow()` conversion
 
-### vs pandas.to_excel
-- ✅ **61-84x faster** depending on engine
-- ✅ Direct Polars support (no pandas dependency)
-- ✅ Richer formatting options
-- ✅ Multi-threading support
-- ✅ Lower peak memory (958 MB vs 1.22 GB with xlsxwriter, 2.95 GB with openpyxl at 1M rows)
+### 🐼 vs pandas.to_excel
+- **61-84x faster** depending on engine
+- Direct Polars support (no pandas dependency)
+- Richer formatting options
+- Multi-threading support
+- Lower peak memory (958 MB vs 1.22 GB with xlsxwriter, 2.95 GB with openpyxl at 1M rows)
 
 ### vs rustpy_xlsxwriter
-- ✅ **6.5x faster** (1M rows: 0.66s vs 4.32s)
-- ✅ Native Arrow support (no data conversion needed)
-- ✅ More formatting options
-- ✅ Multi-threaded sheet generation
+- **6.5x faster** (1M rows: 0.66s vs 4.32s)
+- Native Arrow support (no data conversion needed)
+- More formatting options
+- Multi-threaded sheet generation
 
 
 ## 📋 Supported Data Types
@@ -3035,7 +3033,7 @@ except ValueError as e:
 - Excel uses **ARGB format** for colors: `AARRGGBB` where:
   - `AA` = Alpha channel (transparency) - usually `FF` for fully opaque
   - `RR` = Red component (00-FF in hexadecimal)
-  - `GG` = Green component (00-FF in hexadecimal)  
+  - `GG` = Green component (00-FF in hexadecimal)
   - `BB` = Blue component (00-FF in hexadecimal)
 
 **Example Colors**:
