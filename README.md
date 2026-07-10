@@ -86,9 +86,11 @@ pip install jetxl
 
 
 > [!IMPORTANT]
-> Jetxl is an **experimental xlsx writer** in its current state. There are still
-> bugs and breaking changes that can happen. Existing 
-> functionality is subject to change.
+> **jetxl is an experimental xlsx writer.**
+>
+> - Base functionality (writing without parameters) works correctly.
+> - Using some parameters together may encounter bugs.
+> - Existing parameter functionality is subject to change.
 
 
 
