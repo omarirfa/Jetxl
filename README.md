@@ -11,7 +11,7 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 
 ## ✨ Features
 
-- 🚀 **Ultra-fast**: 5-40x faster than other Python Excel libraries
+- 🚀 **Ultra-fast**: up to 84x faster than other Python Excel libraries
 - 🔄 **Zero-copy Arrow integration**: Direct DataFrame → Excel with no intermediate conversions
 - 🎨 **Rich formatting**: Fonts, colors, borders, alignment, number formats
 - 📊 **Advanced features**: Conditional formatting, data validation, formulas, hyperlinks, Excel tables, charts, images
@@ -23,30 +23,31 @@ Jetxl is a high-performance library for creating Excel files from Python with na
 
 ## ⚡ Performance Comparison
 
-*Benchmark environment: Python 3.13, AMD Ryzen 9 7900x, 64 GB RAM*
+*Benchmark environment: Python 3.13.1 (AMD64), AMD Ryzen 9 7900x, 24 CPUs, 64 GB RAM. 15 reps per measurement, file mode, each measurement isolated in its own subprocess with psutil peak-RSS tracking.*
 
 At the time of the test, the following library versions were used:
-- Jetxl: 0.2.5
+- Jetxl: 0.3.0
 - Polars: 1.42.1
+- Pyarrow: 24.0.0
 - Pandas: 3.0.3
 - Pyexcelerate: 0.13.0
-- Rustpy-xlsxwriter: 0.4.4
+- Rustpy-xlsxwriter: 0.5.2
 - Openpyxl: 3.1.5
 - Xlsxwriter: 3.2.9
 
 
 ### Library comparison summary
-| Library | 1M Rows | Speedup | Throughput | Memory |
-|---------|---------|---------|------------|--------|
-| **jetxl (arrow)** | **0.68s** | **1.0x** | **1468K rows/s** | **~0 MB** |
-| jetxl (dict) | 3.02s | 1.6x slower | 322K rows/s | ~0 MB |
-| rustpy_xlsxwriter | 7.51s | 4.0x slower | 125K rows/s | 267.5 MB |
-| xlsxwriter | 29.16s | **15x slower** | 31K rows/s | 947.6 MB |
-| polars.write_excel | 35.73s | **19x slower** | 26K rows/s | 2.1 GB |
-| pyexcelerate | 36.84s | **19x slower** | 26K rows/s | 1.0 GB |
-| pandas+xlsxwriter | 58.36s | **31x slower** | 16K rows/s | 1.1 GB |
-| openpyxl | 62.80s | **33x slower** | 15K rows/s | 2.4 GB |
-| pandas+openpyxl | 88.10s | **47x slower** | 11K rows/s | 3.1 GB |
+| Library | 1M Rows | Speedup | Throughput | Peak Memory |
+|---------|---------|---------|------------|-------------|
+| **jetxl (arrow)** | **0.66s** | **1.0x** | **1506K rows/s** | **958 MB** |
+| jetxl (dict) | 1.41s | 2.1x slower | 708K rows/s | 1.24 GB |
+| rustpy_xlsxwriter | 4.32s | 6.5x slower | 232K rows/s | 238 MB |
+| pyexcelerate | 18.62s | **28x slower** | 54K rows/s | 711 MB |
+| xlsxwriter | 23.84s | **36x slower** | 42K rows/s | 602 MB |
+| polars.write_excel | 26.57s | **40x slower** | 38K rows/s | 3.13 GB |
+| pandas+xlsxwriter | 40.21s | **61x slower** | 25K rows/s | 1.22 GB |
+| openpyxl | 42.46s | **64x slower** | 24K rows/s | 602 MB |
+| pandas+openpyxl | 56.07s | **84x slower** | 18K rows/s | 2.95 GB |
 
 
 
@@ -59,15 +60,15 @@ The chart below shows the execution time comparison with popular libraries for a
 
 | Library | 10K rows | 100K rows | 1M rows |
 |---------|----------|-----------|---------|
-| **jetxl (arrow)** | **0.022** | **0.19** | **1.85** |
-| jetxl (dict) | 0.033 | 0.30 | 3.02 |
-| rustpy_xlsxwriter | 0.071 | 0.73 | 7.51 |
-| xlsxwriter | 0.28 | 2.91 | 29.16 |
-| polars.write_excel | 0.36 | 3.52 | 35.73 |
-| pyexcelerate | 0.34 | 3.40 | 36.84 |
-| pandas+xlsxwriter | 0.54 | 5.50 | 58.36 |
-| openpyxl | 0.58 | 6.09 | 62.80 |
-| pandas+openpyxl | 0.81 | 8.44 | 88.10 |
+| **jetxl (arrow)** | **0.009** | **0.061** | **0.66** |
+| jetxl (dict) | 0.014 | 0.125 | 1.41 |
+| rustpy_xlsxwriter | 0.043 | 0.43 | 4.32 |
+| pyexcelerate | 0.18 | 1.85 | 18.62 |
+| xlsxwriter | 0.24 | 2.32 | 23.84 |
+| polars.write_excel | 0.26 | 2.56 | 26.57 |
+| pandas+xlsxwriter | 0.40 | 3.99 | 40.21 |
+| openpyxl | 0.40 | 4.12 | 42.46 |
+| pandas+openpyxl | 0.54 | 5.60 | 56.07 |
 
 
 
@@ -768,6 +769,7 @@ cell_styles = [
         "font": {
             "bold": True,
             "italic": False,
+            "underline": False,
             "size": 14.0,
             "color": "FFFF0000",  # Red (ARGB format: AA=alpha, RR=red, GG=green, BB=blue)
             "name": "Arial"
@@ -1132,7 +1134,7 @@ chart = {
     "stacked": True,                    # Stack series (column, bar, line, area)
     "percent_stacked": True,            # Stack as 100% (column, bar, line, area)
     "show_data_labels": True,           # Show data labels on chart
-    "chart_style": 104,                 # Excel chart style (1-48)
+    "chart_style": 104,                 # Excel chart style (1-48 legacy, or 101-148 modern)
     
     # Optional: Axis scaling
     "axis_min": 0.0,                    # Minimum Y-axis value
@@ -1214,11 +1216,15 @@ jet.write_sheet_arrow(
 
 ### Understanding Chart Styles
 
-Excel provides 48 pre-defined chart styles that apply coordinated colors, effects, and formatting. Each chart type interprets these styles differently.
+Excel provides pre-defined chart styles that apply coordinated colors, effects, and formatting. Each chart type interprets these styles differently.
+
+Two numbering ranges are supported:
+- **1-48**: Legacy chart styles (rendered directly, and used as the fallback for older Excel versions)
+- **101-148**: Modern Office 2013+ chart styles. These are emitted with a legacy fallback of `value - 100` (e.g. `104` falls back to style `4`), so they render as the modern style in current Excel and gracefully degrade in older versions.
 
 **Chart Style Numbers (1-48):**
 
-Chart styles are organized into categories:
+The legacy styles are organized into categories:
 - **1-10**: Colorful variations with different color schemes
 - **11-16**: Monochrome styles (black, white, gray variations)
 - **17-32**: Colorful outlined styles with borders
@@ -1234,8 +1240,8 @@ Chart styles are organized into categories:
 
 # Modern/Vibrant
 "chart_style": 42   # Gradient modern
-"chart_style": 102  # Contemporary (if available)
-"chart_style": 104  # Bright modern
+"chart_style": 102  # Contemporary (Office 2013+, falls back to style 2)
+"chart_style": 104  # Bright modern (Office 2013+, falls back to style 4)
 
 # Print-Friendly
 "chart_style": 11   # Black and white
@@ -1456,9 +1462,9 @@ jet.write_sheet_arrow(df.to_arrow(), "styled_chart.xlsx", charts=charts)
 ```
 
 **Chart Style Numbers:**
-- Excel supports chart styles numbered 1-48
+- Legacy styles are numbered 1-48; modern Office 2013+ styles are 101-148 (emitted with a `value - 100` legacy fallback)
 - Each chart type has different style variations
-- Common styles: 2 (colorful), 11 (monochrome), 26 (dark), 42 (gradient)
+- Common styles: 2 (colorful), 11 (monochrome), 26 (dark), 42 (gradient), 102/104 (modern)
 - Experiment with different numbers to find your preferred style
 
 **Font Sizes:**
@@ -2262,6 +2268,28 @@ conditional_formats = [{
 }]
 ```
 
+### Data Bars
+
+Render in-cell bars whose length is proportional to each value, giving a quick visual sense of magnitude without a separate chart:
+```python
+conditional_formats = [{
+    "start_row": 2,
+    "start_col": 2,
+    "end_row": 100,
+    "end_col": 2,
+    "rule_type": "data_bar",
+    "color": "FF638EC6",   # Bar color (ARGB hex)
+    "show_value": True,    # Show cell values alongside bars (default: True)
+    "priority": 1
+}]
+
+jet.write_sheet_arrow(df.to_arrow(), "data_bars.xlsx", conditional_formats=conditional_formats)
+```
+
+**Options:**
+- `color` (required) - Bar fill color in ARGB hex format
+- `show_value` (optional) - Display the cell value in addition to the bar (default: `True`); set to `False` to show bars only
+
 ## 📊 Multiple Sheets
 
 Create multi-sheet workbooks with full independent formatting per sheet. Each sheet supports **all features** from `write_sheet_arrow()` including tables, charts, images, conditional formatting, data validation, formulas, cell styles, and more.
@@ -2933,8 +2961,7 @@ except ValueError as e:
 ## 🤝 Comparison with Other Libraries
 
 ### vs xlsxwriter
-- ✅ **5x faster** (1M rows: 2.06s vs 10.05s)
-- ✅ Near-zero Python memory overhead
+- ✅ **36x faster** (1M rows: 0.66s vs 23.84s)
 - ✅ Zero-copy DataFrame integration
 - ✅ Multi-threaded sheet generation
 - ✅ Modern Python API with type hints
@@ -2942,28 +2969,27 @@ except ValueError as e:
 - ❌ Fewer advanced chart customizations
 
 ### vs openpyxl
-- ✅ **27x faster** (1M rows: 2.06s vs 56.25s)
-- ✅ Dramatically lower memory usage
+- ✅ **64x faster** (1M rows: 0.66s vs 42.46s)
 - ✅ Native Arrow/Polars/Pandas support
 - ❌ Write-only (openpyxl supports reading)
 - ❌ Fewer cell-level features
 
 ### vs polars.write_excel
-- ✅ **20x faster** (1M rows: 2.06s vs 40.85s)
-- ✅ **2000x lower memory** (~0 MB vs 2.1 GB at 1M rows)
+- ✅ **40x faster** (1M rows: 0.66s vs 26.57s)
+- ✅ **~3.3x lower peak memory** (958 MB vs 3.13 GB at 1M rows)
 - ✅ More formatting options (conditional formatting, tables, charts)
 - ✅ Multi-sheet threading support
 - ❌ Requires `.to_arrow()` conversion
 
 ### vs pandas.to_excel
-- ✅ **27-40x faster** depending on engine
+- ✅ **61-84x faster** depending on engine
 - ✅ Direct Polars support (no pandas dependency)
 - ✅ Richer formatting options
 - ✅ Multi-threading support
-- ✅ Dramatically lower memory footprint
+- ✅ Lower peak memory (958 MB vs 1.22 GB with xlsxwriter, 2.95 GB with openpyxl at 1M rows)
 
 ### vs rustpy_xlsxwriter
-- ✅ **5.5x faster** (1M rows: 2.06s vs 11.27s)
+- ✅ **6.5x faster** (1M rows: 0.66s vs 4.32s)
 - ✅ Native Arrow support (no data conversion needed)
 - ✅ More formatting options
 - ✅ Multi-threaded sheet generation
