@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/omarirfa/Jetxl/compare/v0.3.0...v0.3.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* updating cargo for vulnerability ([#51](https://github.com/omarirfa/Jetxl/issues/51)) ([0526ba3](https://github.com/omarirfa/Jetxl/commit/0526ba3c2795261a64a6cb9fb56bf4b0d562c89c))
+
 ## [0.3.0](https://github.com/omarirfa/Jetxl/compare/v0.3.0-alpha...v0.3.0) (2026-07-10)
 
 
