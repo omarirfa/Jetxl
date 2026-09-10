@@ -3,9 +3,12 @@
 [![PyPI Downloads](https://img.shields.io/pypi/dm/jetxl?style=flat-square&logo=pypi&label=downloads)](https://pypi.org/project/jetxl/)
 [![Wheel](https://img.shields.io/pypi/wheel/jetxl?style=flat-square)](https://pypi.org/project/jetxl/#files)
 [![CI](https://img.shields.io/github/actions/workflow/status/omarirfa/jetxl/build_and_publish.yml?style=flat-square&logo=github&label=build)](https://github.com/omarirfa/jetxl/actions)
-[![License](https://img.shields.io/pypi/l/jetxl?style=flat-square)](https://github.com/omarirfa/jetxl/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-jetxl.mintlify.site-1E7A5E?style=flat-square)](https://jetxl.mintlify.site/)
+[![License](https://img.shields.io/pypi/l/jetxl?style=flat-square)](https://github.com/omarirfa/jetxl/blob/master/LICENSE)
 # Jetxl ✈️
 **Blazingly fast Excel (XLSX) writer for Python, powered by Rust**
+
+[Documentation](https://jetxl.mintlify.site/) · [Installation](https://jetxl.mintlify.site/installation) · [Quickstart](https://jetxl.mintlify.site/quickstart) · [API Reference](https://jetxl.mintlify.site/reference/write-sheet-arrow) · [Recipes](https://jetxl.mintlify.site/recipes/sales-report)
 
 Jetxl is a high-performance library for creating Excel files from Python with native support for Arrow, Polars, and Pandas DataFrames. Built from the ground up in Rust for maximum speed and efficiency.
 
