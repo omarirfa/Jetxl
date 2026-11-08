@@ -95,14 +95,21 @@ jobs:
     environment:
       name: pypi
     steps:
+      # Put every wheel and the sdist into one dist/ folder
       - uses: actions/download-artifact@v4
-      - name: Generate artifact attestation
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate GitHub artifact attestation
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: "wheels-*/*"
+          subject-path: "dist/*"
       - name: Show downloaded files
-        run: find . -name "*.whl" -o -name "*.tar.gz" | sort
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        run: ls -l dist
+      # The official PyPA action signs and uploads PEP 740 attestations
+      # (the "Provenance" shown on PyPI) automatically with Trusted Publishing.
       - name: Publish to PyPI
-        run: uv publish --check-url https://pypi.org/simple/ 'wheels-*/*' 'sdist/*'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
