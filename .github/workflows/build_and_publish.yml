@@ -100,10 +100,6 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Generate GitHub artifact attestation
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: "dist/*"
       - name: Show downloaded files
         run: ls -l dist
       # The official PyPA action signs and uploads PEP 740 attestations
@@ -113,3 +109,9 @@ jobs:
         with:
           packages-dir: dist/
           skip-existing: true
+      # Runs after the upload so nothing this step writes can end up in dist/
+      # before publishing; it attests file digests, so order doesn't matter.
+      - name: Generate GitHub artifact attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: "dist/*"
