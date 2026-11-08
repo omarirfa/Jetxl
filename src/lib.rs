@@ -61,7 +61,7 @@ fn decode_dictionary_columns(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatc
         for (i, field) in schema.fields().iter().enumerate() {
             match normalized_target(field.data_type()) {
                 Some(target_dt) => {
-                    let decoded = arrow::compute::cast(batch.column(i), &target_dt)
+                    let decoded = arrow_cast::cast(batch.column(i), &target_dt)
                         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                             format!("Failed to normalize column '{}' ({:?} -> {:?}): {}",
                                     field.name(), field.data_type(), target_dt, e)
