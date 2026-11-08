@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          config-file: release-please-config.json
+          # release-type lives in the config file; setting it here would put the
+          # action in simple mode and silently ignore the config file.
+          config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
-          release-type: rust
