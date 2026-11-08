@@ -508,7 +508,7 @@ fn write_sheets_arrow(
         // "auto", "150px", or a numeric width. (Matches the single-sheet path.)
         if let Some(widths) = sheet_dict.get_item("column_widths")? {
             let widths_dict = widths.cast::<PyDict>()?;
-            let resolved = resolve_column_dict_to_names(&widths_dict, &field_names)?;
+            let resolved = resolve_column_dict_to_names(widths_dict, &field_names)?;
             let mut parsed_widths: HashMap<String, ColumnWidth> = HashMap::with_capacity(resolved.len());
             for (col_name, v) in resolved {
                 let width = if let Ok(s) = v.extract::<String>() {
@@ -535,7 +535,7 @@ fn write_sheets_arrow(
         // Extract column_formats - keys accept int index OR str name.
         if let Some(formats) = sheet_dict.get_item("column_formats")? {
             let formats_dict = formats.cast::<PyDict>()?;
-            let resolved = resolve_column_dict_to_names(&formats_dict, &field_names)?;
+            let resolved = resolve_column_dict_to_names(formats_dict, &field_names)?;
             let mut col_fmts = HashMap::new();
             for (col_name, value) in resolved {
                 let fmt_str: String = value.extract()?;
@@ -566,7 +566,7 @@ fn write_sheets_arrow(
             let validations_list = validations.cast::<pyo3::types::PyList>()?;
             for val_dict in validations_list.iter() {
                 if let Ok(val_dict) = val_dict.cast::<PyDict>() {
-                    if let Ok(validation) = extract_data_validation(&val_dict) {
+                    if let Ok(validation) = extract_data_validation(val_dict) {
                         config.data_validations.push(validation);
                     }
                 }
@@ -600,7 +600,7 @@ fn write_sheets_arrow(
             let styles_list = styles.cast::<pyo3::types::PyList>()?;
             for style_dict in styles_list.iter() {
                 if let Ok(style_dict) = style_dict.cast::<PyDict>() {
-                    if let Ok(cell_style) = extract_cell_style(&style_dict) {
+                    if let Ok(cell_style) = extract_cell_style(style_dict) {
                         config.cell_styles.push(cell_style);
                     }
                 }
@@ -622,7 +622,7 @@ fn write_sheets_arrow(
             let cond_list = cond_formats.cast::<pyo3::types::PyList>()?;
             for cond_dict in cond_list.iter() {
                 if let Ok(cond_dict) = cond_dict.cast::<PyDict>() {
-                    if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                    if let Ok(cond_format) = extract_conditional_format(cond_dict) {
                         config.conditional_formats.push(cond_format);
                     }
                 }
@@ -634,7 +634,7 @@ fn write_sheets_arrow(
             let tables_list = tables_vec.cast::<pyo3::types::PyList>()?;
             for table_dict in tables_list.iter() {
                 if let Ok(table_dict) = table_dict.cast::<PyDict>() {
-                    if let Ok(table) = extract_table(&table_dict) {
+                    if let Ok(table) = extract_table(table_dict) {
                         config.tables.push(table);
                     }
                 }
@@ -646,7 +646,7 @@ fn write_sheets_arrow(
             let charts_list = charts_vec.cast::<pyo3::types::PyList>()?;
             for chart_dict in charts_list.iter() {
                 if let Ok(chart_dict) = chart_dict.cast::<PyDict>() {
-                    if let Ok(chart) = extract_chart(&chart_dict) {
+                    if let Ok(chart) = extract_chart(chart_dict) {
                         config.charts.push(chart);
                     }
                 }
@@ -658,7 +658,7 @@ fn write_sheets_arrow(
             let images_list = images_vec.cast::<pyo3::types::PyList>()?;
             for image_dict in images_list.iter() {
                 if let Ok(image_dict) = image_dict.cast::<PyDict>() {
-                    if let Ok(image) = extract_image(&image_dict) {
+                    if let Ok(image) = extract_image(image_dict) {
                         config.images.push(image);
                     }
                 }
@@ -1062,7 +1062,7 @@ fn write_sheets_arrow_to_bytes(
                 let validations_list = validations.cast::<PyList>()?;
                 for val_dict in validations_list.iter() {
                     if let Ok(val_dict) = val_dict.cast::<PyDict>() {
-                        if let Ok(validation) = extract_data_validation(&val_dict) {
+                        if let Ok(validation) = extract_data_validation(val_dict) {
                             config.data_validations.push(validation);
                         }
                     }
@@ -1096,7 +1096,7 @@ fn write_sheets_arrow_to_bytes(
                 let styles_list = styles.cast::<PyList>()?;
                 for style_dict in styles_list.iter() {
                     if let Ok(style_dict) = style_dict.cast::<PyDict>() {
-                        if let Ok(cell_style) = extract_cell_style(&style_dict) {
+                        if let Ok(cell_style) = extract_cell_style(style_dict) {
                             config.cell_styles.push(cell_style);
                         }
                     }
@@ -1118,7 +1118,7 @@ fn write_sheets_arrow_to_bytes(
                 let cond_list = cond_formats.cast::<PyList>()?;
                 for cond_dict in cond_list.iter() {
                     if let Ok(cond_dict) = cond_dict.cast::<PyDict>() {
-                        if let Ok(cond_format) = extract_conditional_format(&cond_dict) {
+                        if let Ok(cond_format) = extract_conditional_format(cond_dict) {
                             config.conditional_formats.push(cond_format);
                         }
                     }
@@ -1130,7 +1130,7 @@ fn write_sheets_arrow_to_bytes(
                 let tables_list = tables_vec.cast::<PyList>()?;
                 for table_dict in tables_list.iter() {
                     if let Ok(table_dict) = table_dict.cast::<PyDict>() {
-                        if let Ok(table) = extract_table(&table_dict) {
+                        if let Ok(table) = extract_table(table_dict) {
                             config.tables.push(table);
                         }
                     }
@@ -1142,7 +1142,7 @@ fn write_sheets_arrow_to_bytes(
                 let charts_list = charts_vec.cast::<PyList>()?;
                 for chart_dict in charts_list.iter() {
                     if let Ok(chart_dict) = chart_dict.cast::<PyDict>() {
-                        if let Ok(chart) = extract_chart(&chart_dict) {
+                        if let Ok(chart) = extract_chart(chart_dict) {
                             config.charts.push(chart);
                         }
                     }
@@ -1154,7 +1154,7 @@ fn write_sheets_arrow_to_bytes(
                 let images_list = images_vec.cast::<PyList>()?;
                 for image_dict in images_list.iter() {
                     if let Ok(image_dict) = image_dict.cast::<PyDict>() {
-                        if let Ok(image) = extract_image(&image_dict) {
+                        if let Ok(image) = extract_image(image_dict) {
                             config.images.push(image);
                         }
                     }

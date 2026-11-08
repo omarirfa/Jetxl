@@ -2626,7 +2626,7 @@ pub fn generate_sheet_xml_from_arrow(
     if !config.header_content.is_empty() {
         let mut rows_map: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
         for (row, col, text) in &config.header_content {
-            rows_map.entry(*row).or_insert_with(Vec::new).push((*col, text.clone()));
+            rows_map.entry(*row).or_default().push((*col, text.clone()));
         }
         
         let mut sorted_rows: Vec<_> = rows_map.keys().copied().collect();
@@ -3266,7 +3266,7 @@ fn write_arrow_cell_to_xml_optimized(
     }
     
     if let Some(hl) = hyperlink {
-        let display_text = hl.display.as_ref().map(|s| s.as_str()).unwrap_or(&hl.url);
+        let display_text = hl.display.as_deref().unwrap_or(&hl.url);
         
         buf.extend_from_slice(b"<c r=\"");
         buf.extend_from_slice(cell_ref);
