@@ -281,7 +281,7 @@ pub fn write_single_sheet_arrow_with_config(
                     number_format: Some(fmt.clone()),
                 };
                 let style_id = registry.register_cell_style(&cell_style)
-                    .map_err(|e| WriteError::Validation(e))?;
+                    .map_err(WriteError::Validation)?;
                 map.insert(idx, style_id);
             }
         }
@@ -294,7 +294,7 @@ pub fn write_single_sheet_arrow_with_config(
     let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
     for cell_style in &config.cell_styles {
         let style_id = registry.register_cell_style(&cell_style.style)
-            .map_err(|e| WriteError::Validation(e))?;
+            .map_err(WriteError::Validation)?;
         cell_style_map.insert((cell_style.row, cell_style.col), style_id);
     }
 
@@ -304,7 +304,7 @@ pub fn write_single_sheet_arrow_with_config(
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
                     registry.register_cell_style(&cond_format.style)
-                        .map_err(|e| WriteError::Validation(e))?;
+                        .map_err(WriteError::Validation)?;
                     let dxf_id = registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
@@ -329,7 +329,7 @@ pub fn write_single_sheet_arrow_with_config(
     let shared_cols = per_sheet_shared.first().unwrap_or(&empty_shared);
     let has_sst = !sst.is_empty();
 
-    add_static_files_ext(&mut zipper, &sheet_names, Some(&registry), &vec![config.tables.len()], &charts_count, &images_data, has_sst);
+    add_static_files_ext(&mut zipper, &sheet_names, Some(&registry), &[config.tables.len()], &charts_count, &images_data, has_sst);
 
     if has_sst {
         zipper
@@ -400,11 +400,10 @@ pub fn write_single_sheet_arrow_with_config(
             }
             
             // Auto-calculate end_col if not specified (0 means auto)
-            if adjusted_table.range.3 == 0 {
-                if num_cols > 0 {
+            if adjusted_table.range.3 == 0
+                && num_cols > 0 {
                     adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
                 }
-            }
             
             // If table starts after row 1, we inserted a header row, so adjust end_row
             // Only adjust if user manually specified end_row (not auto-calculated)
@@ -523,7 +522,7 @@ pub fn write_single_sheet_arrow_to_bytes(
                     number_format: Some(fmt.clone()),
                 };
                 let style_id = registry.register_cell_style(&cell_style)
-                    .map_err(|e| WriteError::Validation(e))?;
+                    .map_err(WriteError::Validation)?;
                 map.insert(idx, style_id);
             }
         }
@@ -535,7 +534,7 @@ pub fn write_single_sheet_arrow_to_bytes(
     let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
     for cell_style in &config.cell_styles {
         let style_id = registry.register_cell_style(&cell_style.style)
-            .map_err(|e| WriteError::Validation(e))?;
+            .map_err(WriteError::Validation)?;
         cell_style_map.insert((cell_style.row, cell_style.col), style_id);
     }
 
@@ -545,7 +544,7 @@ pub fn write_single_sheet_arrow_to_bytes(
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
                     registry.register_cell_style(&cond_format.style)
-                        .map_err(|e| WriteError::Validation(e))?;
+                        .map_err(WriteError::Validation)?;
                     dxf_ids.insert(idx, idx);
                 }
                 _ => {}
@@ -929,11 +928,10 @@ pub fn write_multiple_sheets_arrow_to_bytes(
                     adjusted_table.range.2 = adjusted_table.range.0 + total_data_rows;
                 }
                 
-                if adjusted_table.range.3 == 0 {
-                    if num_cols > 0 {
+                if adjusted_table.range.3 == 0
+                    && num_cols > 0 {
                         adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
                     }
-                }
                 
                 if adjusted_table.range.0 > 1 && table.range.2 != 0 {
                     adjusted_table.range.2 += 1;
@@ -1080,7 +1078,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
                         number_format: Some(fmt.clone()),
                     };
                     let style_id = style_registry.register_cell_style(&cell_style)
-                        .map_err(|e| WriteError::Validation(e))?;
+                        .map_err(WriteError::Validation)?;
                     col_format_map.insert(idx, style_id);
                 }
             }
@@ -1091,7 +1089,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
         let mut cell_style_map: HashMap<(usize, usize), u32> = HashMap::new();
         for cell_style in &config.cell_styles {
             let style_id = style_registry.register_cell_style(&cell_style.style)
-                .map_err(|e| WriteError::Validation(e))?;
+                .map_err(WriteError::Validation)?;
             cell_style_map.insert((cell_style.row, cell_style.col), style_id);
         }
         sheet_cell_style_maps.push(cell_style_map);
@@ -1101,7 +1099,7 @@ pub fn write_multiple_sheets_arrow_with_configs(
             match &cond_format.rule {
                 ConditionalRule::CellValue { .. } | ConditionalRule::Top10 { .. } => {
                     style_registry.register_cell_style(&cond_format.style)
-                        .map_err(|e| WriteError::Validation(e))?;
+                        .map_err(WriteError::Validation)?;
                     let dxf_id = style_registry.register_dxf(&cond_format.style);
                     dxf_ids.insert(idx, dxf_id);
                 }
@@ -1266,11 +1264,10 @@ pub fn write_multiple_sheets_arrow_with_configs(
                 }
                 
                 // Auto-calculate end_col if not specified (0 means auto)
-                if adjusted_table.range.3 == 0 {
-                    if num_cols > 0 {
+                if adjusted_table.range.3 == 0
+                    && num_cols > 0 {
                         adjusted_table.range.3 = adjusted_table.range.1 + num_cols - 1;
                     }
-                }
                 
                 // If table starts after row 1, we inserted a header row, so adjust end_row
                 // Only adjust if user manually specified end_row (not auto-calculated)

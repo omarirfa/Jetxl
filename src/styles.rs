@@ -704,7 +704,7 @@ pub fn generate_styles_xml_enhanced(registry: &StyleRegistry) -> String {
         if apply_alignment { xml.push_str(" applyAlignment=\"1\""); }
         
         if let Some(ref align) = xf.alignment {
-            xml.push_str(">");
+            xml.push('>');
             xml.push_str("<alignment");
             if let Some(ref h) = align.horizontal {
                 xml.push_str(&format!(" horizontal=\"{}\"", match h {
