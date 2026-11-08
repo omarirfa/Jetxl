@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/omarirfa/Jetxl/compare/v0.3.2...v0.3.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* **deps:** remove unused crates and depend on arrow-cast directly ([647fdd1](https://github.com/omarirfa/Jetxl/commit/647fdd178ad1b04959f1b859062ff82c3b0858f1))
+
 ## [0.3.2](https://github.com/omarirfa/Jetxl/compare/v0.3.1...v0.3.2) (2026-11-08)
 
 
