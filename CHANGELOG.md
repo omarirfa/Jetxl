@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.2](https://github.com/omarirfa/Jetxl/compare/v0.3.1...v0.3.2) (2026-11-08)
+
+
+### Features
+
+* add Python 3.15 support ([fa5da9a](https://github.com/omarirfa/Jetxl/commit/fa5da9a0f7dde499eadb2ef193dbbbaca09a122e))
+
+
+### Bug Fixes
+
+* **deps:** update pyo3 to 0.30, arrow to 60 and pyo3-arrow to 0.21 ([e98023b](https://github.com/omarirfa/Jetxl/commit/e98023b8596549108a4e1cbe202966f4d81672f2))
+
+
+### Miscellaneous Chores
+
+* release 0.3.2 ([c295fbf](https://github.com/omarirfa/Jetxl/commit/c295fbf14d9063edd4e1b1f70a7a365efd762018))
+
+
+### Continuous Integration
+
+* **release-please:** keep existing v-prefixed tag format ([75616ec](https://github.com/omarirfa/Jetxl/commit/75616ec30231c34c24870b9caec070f516de9a69))
+
 ## [0.3.1](https://github.com/omarirfa/Jetxl/compare/v0.3.0...v0.3.1) (2026-07-11)
 
 
