@@ -8,9 +8,9 @@ table in the main README are generated from `results/latest.json`.
 
 ```bash
 python -m venv .venv-bench
-.venv-bench/bin/pip install -r benchmarks/requirements.txt   # Windows: .venv-bench\Scripts\pip
-.venv-bench/bin/python benchmarks/bench.py          # 10K, 100K and 1M rows, 5 timed reps
-.venv-bench/bin/python benchmarks/report.py         # chart + benchmarks/results/summary.md
+.venv-bench/bin/pip install -r benchmark/requirements.txt   # Windows: .venv-bench\Scripts\pip
+.venv-bench/bin/python benchmark/bench.py          # 10K, 100K and 1M rows, 5 timed reps
+.venv-bench/bin/python benchmark/report.py         # chart + benchmark/results/summary.md
 ```
 
 `report.py --update-readme` also rewrites the section of the main README between
@@ -78,8 +78,8 @@ writing to a file. There is no dict version because jetxl has no dict bytes func
 To time only the two jetxl output paths:
 
 ```bash
-python benchmarks/bench.py --libs "jetxl (arrow)" "jetxl (arrow, bytes)" --out benchmarks/results/in_memory.json
-python benchmarks/report.py --results benchmarks/results/in_memory.json --no-svg --summary benchmarks/results/in_memory_summary.md
+python benchmark/bench.py --libs "jetxl (arrow)" "jetxl (arrow, bytes)" --out benchmark/results/in_memory.json
+python benchmark/report.py --results benchmark/results/in_memory.json --no-svg --summary benchmark/results/in_memory_summary.md
 ```
 
 ## Files
@@ -88,3 +88,5 @@ python benchmarks/report.py --results benchmarks/results/in_memory.json --no-svg
 - `libs.py`: the data, each library's input and writer, and the read-back check
 - `report.py`: builds the README chart and tables from the results
 - `requirements.txt`: the exact versions used for the committed results
+- `execution_time.svg`: the chart shown in the main README, written by `report.py`
+- `results/`: raw results (`latest.json`, `in_memory.json`) and the generated summaries

@@ -12,10 +12,10 @@ that rotates between sizes. Inside that process:
   4. the file is read back and every cell is compared with the source data
 
 Usage:
-    python benchmarks/bench.py                      # 10K, 100K, 1M rows, 5 reps
-    python benchmarks/bench.py --quick              # 10K and 100K rows, 3 reps
-    python benchmarks/bench.py --sizes 1000000 --libs "jetxl (arrow)" xlsxwriter
-    python benchmarks/report.py                     # chart + tables from the results
+    python benchmark/bench.py                      # 10K, 100K, 1M rows, 5 reps
+    python benchmark/bench.py --quick              # 10K and 100K rows, 3 reps
+    python benchmark/bench.py --sizes 1000000 --libs "jetxl (arrow)" xlsxwriter
+    python benchmark/report.py                     # chart + tables from the results
 """
 from __future__ import annotations
 

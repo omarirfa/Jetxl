@@ -1,4 +1,4 @@
-# Exact versions behind benchmarks/results/latest.json.
+# Exact versions behind benchmark/results/latest.json.
 # To benchmark a local jetxl build, install this file, then `maturin develop --release`.
 jetxl==0.3.3
 numpy==2.5.4
