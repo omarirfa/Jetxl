@@ -1,0 +1,13 @@
+# Exact versions behind benchmarks/results/latest.json.
+# To benchmark a local jetxl build, install this file, then `maturin develop --release`.
+jetxl==0.3.3
+numpy==2.5.4
+pyarrow==26.0.1
+polars==2.1.0
+pandas==3.1.1
+xlsxwriter==3.3.1
+openpyxl==3.1.5
+pyexcelerate==0.13.0
+rustpy-xlsxwriter==0.9.1
+psutil==7.2.2
+python-calamine==0.9.1
