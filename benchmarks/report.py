@@ -88,15 +88,18 @@ PLOT_W, BASE_Y = 680, 314
 # ---------------------------------------------------------------------------
 
 def load(path: Path):
+    """Successful runs split into file output (README chart and tables) and
+    in-memory output (its own table), plus a list of failed runs."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    good, bad = {}, []
+    good, in_memory, bad = {}, {}, []
     for r in data["results"]:
         if "median_s" in r and (r.get("check") is None or r["check"]["ok"]):
-            good.setdefault(r["rows"], {})[r["library"]] = r
+            target = in_memory if r.get("output") == "bytes" else good
+            target.setdefault(r["rows"], {})[r["library"]] = r
         elif "skipped" not in r:
             reason = r.get("error") or r["check"]["error"]
             bad.append(f"{r['library']} at {r['rows']:,} rows: {reason}")
-    return data["meta"], good, bad
+    return data["meta"], good, in_memory, bad
 
 
 def fmt_rows(n: int) -> str:
@@ -230,6 +233,21 @@ def sizes_table(good: dict) -> str:
     return "\n".join(out)
 
 
+def in_memory_table(good: dict, in_memory: dict) -> str:
+    """Each in-memory entry next to its file-writing counterpart, per size."""
+    out = ["| Rows | Library | To file | To bytes | Write memory (file / bytes) |",
+           "|---|---|---|---|---|"]
+    for n in sorted(in_memory):
+        for lib, b in sorted(in_memory[n].items()):
+            base = lib.replace(", bytes)", ")")
+            f = good.get(n, {}).get(base)
+            file_time = fmt_time(f["median_s"]) if f else "—"
+            file_mem = fmt_mem(f["write_mem_mb"]) if f else "—"
+            out.append(f"| {fmt_rows(n)} | {base} | {file_time} | {fmt_time(b['median_s'])} | "
+                       f"{file_mem} / {fmt_mem(b['write_mem_mb'])} |")
+    return "\n".join(out)
+
+
 def readme_sizes_table(good: dict) -> str:
     """Seconds per size, fastest library in bold (the README's own table format)."""
     sizes = sorted(good)
@@ -264,23 +282,29 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", type=Path, default=HERE / "results" / "latest.json")
     ap.add_argument("--svg", type=Path, default=ROOT / "benchmark" / "execution_time.svg")
+    ap.add_argument("--no-svg", action="store_true", help="don't write the chart")
     ap.add_argument("--summary", type=Path, default=HERE / "results" / "summary.md")
     ap.add_argument("--update-readme", action="store_true")
     ap.add_argument("--readme", type=Path, default=ROOT / "README.md")
     args = ap.parse_args()
 
-    meta, good, bad = load(args.results)
+    meta, good, in_memory, bad = load(args.results)
     if not good:
         raise SystemExit("no successful runs in " + str(args.results))
 
-    args.svg.write_text(svg_chart(good), encoding="utf-8", newline="\n")
+    if not args.no_svg:
+        args.svg.write_text(svg_chart(good), encoding="utf-8", newline="\n")
     block = readme_block(meta, good)
     summary = block + "\n\n### All sizes (median write time)\n" + sizes_table(good) + "\n"
+    if in_memory:
+        summary += ("\n### In-memory output (median write time)\n" + in_memory_table(good, in_memory) + "\n")
     if bad:
         summary += "\n### Left out\n" + "\n".join(f"- {b}" for b in bad) + "\n"
     args.summary.write_text(summary, encoding="utf-8", newline="\n")
     print(summary)
-    print(f"wrote {args.svg}\nwrote {args.summary}")
+    if not args.no_svg:
+        print(f"wrote {args.svg}")
+    print(f"wrote {args.summary}")
 
     if args.update_readme:
         text = args.readme.read_bytes().decode("utf-8")  # keep the file's own line endings

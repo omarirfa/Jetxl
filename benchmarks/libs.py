@@ -68,6 +68,9 @@ def to_rows(src: dict[str, np.ndarray]) -> list[list]:
 # ---------------------------------------------------------------------------
 # Writers: name -> (packages for the version list, build_input, write)
 # Imports happen inside, so each process only loads what that library needs.
+# A writer either writes `path` and returns None, or returns the workbook as
+# bytes (in-memory output). Entries in BYTES_OUTPUT are kept out of the README
+# chart and tables, which compare writing to a file.
 # ---------------------------------------------------------------------------
 
 def _arrow_input(src):
@@ -88,6 +91,13 @@ def _pandas_input(src):
 def _w_jetxl_arrow(table, path):
     import jetxl
     jetxl.write_sheet_arrow(table, path)
+
+
+def _w_jetxl_arrow_bytes(table, path):
+    # in-memory output: returns the workbook instead of writing `path`; the
+    # harness saves it afterwards, outside the timer, for the read-back check
+    import jetxl
+    return jetxl.write_sheet_arrow_to_bytes(table)
 
 
 def _w_jetxl_dict(cols, path):
@@ -148,6 +158,7 @@ def _w_pandas_xlsxwriter(df, path):
 
 WRITERS = {
     "jetxl (arrow)": (["jetxl", "pyarrow"], _arrow_input, _w_jetxl_arrow),
+    "jetxl (arrow, bytes)": (["jetxl", "pyarrow"], _arrow_input, _w_jetxl_arrow_bytes),
     "jetxl (dict)": (["jetxl"], to_python_columns, _w_jetxl_dict),
     "rustpy_xlsxwriter": (["rustpy-xlsxwriter", "polars"], _polars_input, _w_rustpy),
     "xlsxwriter": (["xlsxwriter"], to_rows, _w_xlsxwriter),
@@ -157,6 +168,7 @@ WRITERS = {
     "pandas+xlsxwriter": (["pandas", "xlsxwriter"], _pandas_input, _w_pandas_xlsxwriter),
     "pandas+openpyxl": (["pandas", "openpyxl"], _pandas_input, _w_pandas_openpyxl),
 }
+BYTES_OUTPUT = {"jetxl (arrow, bytes)"}
 
 
 # ---------------------------------------------------------------------------

@@ -105,21 +105,29 @@ def run_child(lib: str, rows: int, reps: int, check: bool) -> dict:
         sampler = _RssSampler()
         before = sampler.rss()
         sampler.start()
-        write(data, path)
+        out = write(data, path)  # in-memory writers return bytes, still held here
         sampler.stop()
         write_mem_mb = max(0, sampler.peak - before) / 2**20
 
         times = []
         for _ in range(reps):
-            os.remove(path)
+            out = None
+            if os.path.exists(path):
+                os.remove(path)
             gc.collect()
             t0 = time.perf_counter()
-            write(data, path)
+            out = write(data, path)
             times.append(time.perf_counter() - t0)
+        if out is not None:
+            # in-memory output: save it outside the timer for the size and the check
+            with open(path, "wb") as f:
+                f.write(out)
+            out = None
 
         record = {
             "library": lib,
             "rows": rows,
+            "output": "bytes" if lib in libs.BYTES_OUTPUT else "file",
             "times_s": times,
             "median_s": statistics.median(times),
             "min_s": min(times),

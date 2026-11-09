@@ -50,6 +50,7 @@ Each library writes a plain sheet using its fastest documented approach:
 | Library | Input | How it writes |
 |---|---|---|
 | jetxl (arrow) | PyArrow table | `write_sheet_arrow` |
+| jetxl (arrow, bytes) | PyArrow table | `write_sheet_arrow_to_bytes` (in-memory output, kept out of the README chart; see below) |
 | jetxl (dict) | dict of Python lists | `write_sheet` |
 | rustpy_xlsxwriter | Polars DataFrame | `write_worksheet` |
 | xlsxwriter | list of rows | `constant_memory` mode, one `write_row` per row, a default date format |
@@ -67,6 +68,19 @@ Things that are not perfectly equal, and why:
   `to_excel` does.
 - pyexcelerate's bulk `data=` path writes dates as plain numbers, so the benchmark adds
   its documented column style to make them dates (about 10% slower than without).
+
+## In-memory output
+
+`jetxl (arrow, bytes)` times `write_sheet_arrow_to_bytes`. The returned bytes are saved
+to disk after the timer stops, so the same read-back check applies. It is reported in
+its own table next to `write_sheet_arrow`, not in the README chart, which compares
+writing to a file. There is no dict version because jetxl has no dict bytes function.
+To time only the two jetxl output paths:
+
+```bash
+python benchmarks/bench.py --libs "jetxl (arrow)" "jetxl (arrow, bytes)" --out benchmarks/results/in_memory.json
+python benchmarks/report.py --results benchmarks/results/in_memory.json --no-svg --summary benchmarks/results/in_memory_summary.md
+```
 
 ## Files
 
