@@ -1,0 +1,202 @@
+{
+  "meta": {
+    "date": "2026-11-09T04:02:51+00:00",
+    "os": "Windows 10",
+    "os_detail": "Windows-10-10.0.19045-SP0",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "logical_cpus": 24,
+    "ram_gb": 64,
+    "python": "3.13.1",
+    "versions": {
+      "jetxl": "0.3.3",
+      "numpy": "2.5.4",
+      "pyarrow": "26.0.1",
+      "python-calamine": "0.9.1"
+    },
+    "sizes": [
+      10000,
+      100000,
+      1000000
+    ],
+    "reps": 5,
+    "warmup": 1,
+    "columns": 10,
+    "checked": true
+  },
+  "results": [
+    {
+      "library": "jetxl (arrow)",
+      "rows": 10000,
+      "output": "file",
+      "times_s": [
+        0.01604310004040599,
+        0.01647969987243414,
+        0.014311800012364984,
+        0.015298099955543876,
+        0.01503850007429719
+      ],
+      "median_s": 0.015298099955543876,
+      "min_s": 0.014311800012364984,
+      "max_s": 0.01647969987243414,
+      "convert_s": 0.45637449994683266,
+      "write_mem_mb": 9.26953125,
+      "process_peak_mb": 106.265625,
+      "file_bytes": 946370,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 100000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    },
+    {
+      "library": "jetxl (arrow, bytes)",
+      "rows": 10000,
+      "output": "bytes",
+      "times_s": [
+        0.013740799855440855,
+        0.013946299906820059,
+        0.01503359992057085,
+        0.014798699878156185,
+        0.014326700009405613
+      ],
+      "median_s": 0.014326700009405613,
+      "min_s": 0.013740799855440855,
+      "max_s": 0.01503359992057085,
+      "convert_s": 0.4926006000023335,
+      "write_mem_mb": 11.4140625,
+      "process_peak_mb": 109.9375,
+      "file_bytes": 946370,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 100000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    },
+    {
+      "library": "jetxl (arrow, bytes)",
+      "rows": 100000,
+      "output": "bytes",
+      "times_s": [
+        0.10009750002063811,
+        0.09843989997170866,
+        0.0994758999440819,
+        0.10029870015569031,
+        0.10161140002310276
+      ],
+      "median_s": 0.10009750002063811,
+      "min_s": 0.09843989997170866,
+      "max_s": 0.10161140002310276,
+      "convert_s": 0.4599721000995487,
+      "write_mem_mb": 114.5546875,
+      "process_peak_mb": 270.23828125,
+      "file_bytes": 9476035,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 1000000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    },
+    {
+      "library": "jetxl (arrow)",
+      "rows": 100000,
+      "output": "file",
+      "times_s": [
+        0.10298670013435185,
+        0.10234480001963675,
+        0.10836150008253753,
+        0.10050250007770956,
+        0.10009590000845492
+      ],
+      "median_s": 0.10234480001963675,
+      "min_s": 0.10009590000845492,
+      "max_s": 0.10836150008253753,
+      "convert_s": 0.46075170021504164,
+      "write_mem_mb": 89.33203125,
+      "process_peak_mb": 262.9765625,
+      "file_bytes": 9476035,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 1000000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    },
+    {
+      "library": "jetxl (arrow)",
+      "rows": 1000000,
+      "output": "file",
+      "times_s": [
+        1.1449541000183672,
+        1.4159752000123262,
+        1.3414093998726457,
+        1.2304793000221252,
+        1.2216926999390125
+      ],
+      "median_s": 1.2304793000221252,
+      "min_s": 1.1449541000183672,
+      "max_s": 1.4159752000123262,
+      "convert_s": 0.6342157002072781,
+      "write_mem_mb": 940.5078125,
+      "process_peak_mb": 1322.53515625,
+      "file_bytes": 94865581,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 10000000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    },
+    {
+      "library": "jetxl (arrow, bytes)",
+      "rows": 1000000,
+      "output": "bytes",
+      "times_s": [
+        1.0471220000181347,
+        1.1245178999379277,
+        1.1297975000925362,
+        1.1341685999650508,
+        1.1705634000245482
+      ],
+      "median_s": 1.1297975000925362,
+      "min_s": 1.0471220000181347,
+      "max_s": 1.1705634000245482,
+      "convert_s": 0.6315407999791205,
+      "write_mem_mb": 940.3125,
+      "process_peak_mb": 1304.4140625,
+      "file_bytes": 94865581,
+      "versions": {
+        "jetxl": "0.3.3",
+        "pyarrow": "26.0.1"
+      },
+      "check": {
+        "ok": true,
+        "cells": 10000000,
+        "error": null,
+        "max_float_rel_err": 0.0
+      }
+    }
+  ]
+}
