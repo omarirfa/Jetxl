@@ -264,8 +264,32 @@ def readme_sizes_table(good: dict) -> str:
     return "\n".join(out)
 
 
-def readme_block(meta: dict, good: dict) -> str:
-    return "\n\n".join([
+def readme_in_memory_section(meta: dict, good: dict, in_memory: dict) -> str | None:
+    """README table: write_sheet_arrow vs write_sheet_arrow_to_bytes, both from
+    the same run so the two columns compare directly."""
+    rows = [n for n in sorted(in_memory)
+            if "jetxl (arrow, bytes)" in in_memory[n] and "jetxl (arrow)" in good.get(n, {})]
+    if not rows:
+        return None
+    date = dt.datetime.fromisoformat(meta["date"]).date().isoformat()
+    out = ["### In-memory output", "",
+           "`write_sheet_arrow_to_bytes` returns the workbook as `bytes` instead of writing a file, for web "
+           "responses, cloud functions and object storage. Both columns come from one run on "
+           f"{date}, with the same data and method as above, so they compare directly with each other. "
+           "Timings vary a little between runs, so the file times can differ slightly from the tables above.",
+           "",
+           "| Rows | To file (`write_sheet_arrow`) | To bytes (`write_sheet_arrow_to_bytes`) "
+           "| Write memory (file / bytes) |",
+           "|------|------|------|------|"]
+    for n in rows:
+        f, b = good[n]["jetxl (arrow)"], in_memory[n]["jetxl (arrow, bytes)"]
+        out.append(f"| {fmt_rows(n)} | {fmt_time(f['median_s'])} | {fmt_time(b['median_s'])} | "
+                   f"{fmt_mem(f['write_mem_mb'])} / {fmt_mem(b['write_mem_mb'])} |")
+    return "\n".join(out)
+
+
+def readme_block(meta: dict, good: dict, in_memory_section: str | None = None) -> str:
+    return "\n\n".join(part for part in [
         environment_note(meta),
         version_list(meta),
         "### Library comparison summary\n" + summary_table(good),
@@ -275,7 +299,8 @@ def readme_block(meta: dict, good: dict) -> str:
         "file against Jetxl. Performance will vary on different hardware.\n"
         "![exec_time_comparison](benchmark/execution_time.svg)",
         "### Execution Time (seconds)\n\n" + readme_sizes_table(good),
-    ])
+        in_memory_section,
+    ] if part)
 
 
 def main():
@@ -283,6 +308,8 @@ def main():
     ap.add_argument("--results", type=Path, default=HERE / "results" / "latest.json")
     ap.add_argument("--svg", type=Path, default=ROOT / "benchmark" / "execution_time.svg")
     ap.add_argument("--no-svg", action="store_true", help="don't write the chart")
+    ap.add_argument("--in-memory", type=Path, default=HERE / "results" / "in_memory.json",
+                    help="jetxl file-vs-bytes results for the README's in-memory table (skipped if missing)")
     ap.add_argument("--summary", type=Path, default=HERE / "results" / "summary.md")
     ap.add_argument("--update-readme", action="store_true")
     ap.add_argument("--readme", type=Path, default=ROOT / "README.md")
@@ -294,9 +321,15 @@ def main():
 
     if not args.no_svg:
         args.svg.write_text(svg_chart(good), encoding="utf-8", newline="\n")
-    block = readme_block(meta, good)
+    mem_section = None
+    if args.in_memory.exists() and args.in_memory.resolve() != args.results.resolve():
+        mem_meta, mem_good, mem_bytes, _ = load(args.in_memory)
+        mem_section = readme_in_memory_section(mem_meta, mem_good, mem_bytes)
+    elif in_memory:
+        mem_section = readme_in_memory_section(meta, good, in_memory)
+    block = readme_block(meta, good, mem_section)
     summary = block + "\n\n### All sizes (median write time)\n" + sizes_table(good) + "\n"
-    if in_memory:
+    if in_memory and not mem_section:
         summary += ("\n### In-memory output (median write time)\n" + in_memory_table(good, in_memory) + "\n")
     if bad:
         summary += "\n### Left out\n" + "\n".join(f"- {b}" for b in bad) + "\n"
