@@ -1,4 +1,4 @@
-*Benchmark environment: Python 3.13.1, AMD Ryzen 9 7900X 12-Core Processor, 24 logical CPUs, 64 GB RAM, Windows 10. Run on 2026-11-09 with [`benchmarks/bench.py`](benchmarks/): each library and size in its own fresh process, median of 5 timed writes after one warmup, every output file read back and checked cell by cell.*
+*Benchmark environment: Python 3.13.1, AMD Ryzen 9 7900X 12-Core Processor, 24 logical CPUs, 64 GB RAM, Windows 10. Run on 2026-11-09 with [`benchmark/bench.py`](benchmark/): each library and size in its own fresh process, median of 5 timed writes after one warmup, every output file read back and checked cell by cell.*
 
 At the time of the test, the following library versions were used:
 - Jetxl: 0.3.3

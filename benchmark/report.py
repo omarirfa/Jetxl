@@ -1,7 +1,7 @@
-"""Turn benchmarks/results/latest.json into the README chart and tables.
+"""Turn benchmark/results/latest.json into the README chart and tables.
 
-    python benchmarks/report.py                    # chart + benchmarks/results/summary.md
-    python benchmarks/report.py --update-readme    # also rewrite the README section
+    python benchmark/report.py                    # chart + benchmark/results/summary.md
+    python benchmark/report.py --update-readme    # also rewrite the README section
                                                    # between the benchmark markers
 
 Runs that crashed or failed the read-back check are left out and listed.
@@ -192,7 +192,7 @@ def environment_note(meta: dict) -> str:
     check = ", every output file read back and checked cell by cell" if meta.get("checked") else ""
     return (f"*Benchmark environment: Python {meta['python']}, {meta['cpu']}, {meta['logical_cpus']} logical CPUs, "
             f"{meta['ram_gb']} GB RAM, {meta['os']}. Run on {date} with "
-            f"[`benchmarks/bench.py`](benchmarks/): each library and size in its own fresh process, "
+            f"[`benchmark/bench.py`](benchmark/): each library and size in its own fresh process, "
             f"median of {meta['reps']} timed writes after one warmup{check}.*")
 
 
@@ -306,7 +306,7 @@ def readme_block(meta: dict, good: dict, in_memory_section: str | None = None) -
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", type=Path, default=HERE / "results" / "latest.json")
-    ap.add_argument("--svg", type=Path, default=ROOT / "benchmark" / "execution_time.svg")
+    ap.add_argument("--svg", type=Path, default=HERE / "execution_time.svg")
     ap.add_argument("--no-svg", action="store_true", help="don't write the chart")
     ap.add_argument("--in-memory", type=Path, default=HERE / "results" / "in_memory.json",
                     help="jetxl file-vs-bytes results for the README's in-memory table (skipped if missing)")
