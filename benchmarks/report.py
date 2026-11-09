@@ -122,7 +122,10 @@ def svg_chart(good: dict) -> str:
     big = sizes[-1]
     libs = sorted(good[big], key=lambda lib: good[big][lib]["median_s"])
     times = {(n, lib): good[n][lib]["median_s"] for n in sizes for lib in libs if lib in good[n]}
-    lo = math.log10(min(times.values())) - 0.15
+    fastest = math.log10(min(times.values()))
+    # reach at least slightly below the decade gridline nearest the fastest bar,
+    # so the chart always has a labelled line under the shortest bars
+    lo = min(fastest - 0.15, round(fastest) - 0.15)
     hi = math.log10(max(times.values())) + 0.10
     scale = BASE_Y / (hi - lo)
 
